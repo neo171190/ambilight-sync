@@ -1,7 +1,8 @@
 const TEXT = {
   ru: {
     title: "Ambilight Sync",
-    subtitle: "0.4.0",
+    subtitle: "Свет продолжает экран",
+    atmosphere: "Атмосфера", settings: "Настройки", liveColors: "Цвета телевизора", liveHint: "Исходные цвета телевизора до обработки для светильников", previewWaiting: "Цвета появятся после включения синхронизации", lightsCount: "светильников", version: "Версия",
     basics: "Основные", speed: "Скорость и плавность", spatialSettings: "Пространственное смешивание",
     intensity: "Интенсивность", intensityDesc: "Усиление яркости до 4×: 100% сохраняет прежний уровень, 200% — вдвое, 400% — вчетверо. Минимум и максимум ограничивают результат: на этих границах изменение может быть незаметно. Цвет не меняется.",
     processedDesc: "Рекомендуется. Обработанные Philips цвета, обычно более насыщенные и ближе к встроенному Ambilight.",
@@ -126,7 +127,8 @@ const TEXT = {
   },
   en: {
     title: "Ambilight Sync",
-    subtitle: "0.4.0",
+    subtitle: "Let the screen fill the room",
+    atmosphere: "Atmosphere", settings: "Settings", liveColors: "Colors from your TV", liveHint: "TV source colors before light output processing", previewWaiting: "Colors will appear when sync is running", lightsCount: "lights", version: "Version",
     basics: "Basics", speed: "Speed & smoothing", spatialSettings: "Spatial mixing",
     intensity: "Intensity", intensityDesc: "Brightness gain up to 4×: 100% keeps the previous level, 200% doubles it, 400% quadruples it. Minimum and maximum clamp the result, so changes at those limits may not be visible. Color is unchanged.",
     processedDesc: "Recommended. Philips-processed colors, usually more saturated and closer to the TV's built-in Ambilight.",
@@ -280,13 +282,16 @@ class AmbilightSyncPanel extends HTMLElement {
     this._saving = false;
     this._toggling = false;
     this._statusTimer = null;
-    this._openSettings = "basics";
+    this._openSettings = "speed";
+    this._tab = "atmosphere";
+    this._dirty = false;
     this._debugVisible = false;
   }
 
   set hass(value) {
     const first = !this._hass;
     this._hass = value;
+    this.dataset.theme = value?.themes?.darkMode ? "dark" : "light";
     // Never re-render on routine HA state updates. Native dropdowns stay open.
     if (first && this.isConnected) this._load();
   }
@@ -386,15 +391,15 @@ class AmbilightSyncPanel extends HTMLElement {
     });
   }
 
-  _settingsMarkup(g) {
+  _settingsMarkup(g, basicsOnly = false) {
     const t = this.t;
     const range = (key, label, help = "") => this._range(key, label, g[key] ?? NEW_DEFAULTS[key], help ? esc(help) : "");
     const section = (id, title, content) => `<div class="settings-section"><button type="button" class="settings-toggle" data-settings-toggle="${id}" aria-expanded="${this._openSettings === id}" aria-controls="settings-${id}"><span><strong>${esc(title)}</strong><small data-settings-summary="${id}">${esc(this._settingsSummary(id, g))}</small></span><span class="chevron" aria-hidden="true">›</span></button><div id="settings-${id}" class="section-controls" ${this._openSettings === id ? "" : "hidden"}>${content}</div></div>`;
     const source = `<div class="control"><div class="control-heading"><label for="source" class="control-title">${esc(t.source)}</label>${this._info("source_help", esc(g.source === "measured" ? t.measuredDesc : t.processedDesc))}</div><select id="source"><option value="processed" ${g.source !== "measured" ? "selected" : ""}>${esc(t.processed)}</option><option value="measured" ${g.source === "measured" ? "selected" : ""}>${esc(t.measured)}</option></select></div>`;
     const mode = g.color_mode || "average";
     const algorithm = `<div class="control"><div class="control-heading"><label for="color_mode" class="control-title">${esc(t.colorMode)}</label>${this._info("color_mode_help", esc(t[`${mode}Desc`]))}</div><select id="color_mode">${["average", "perceptual", "dominant"].map((key) => `<option value="${key}" ${mode === key ? "selected" : ""}>${esc(t[key])}</option>`).join("")}</select></div>`;
+    if (basicsOnly) return `<section class="card atmosphere-settings"><h2>${esc(t.global)}</h2><p class="intro">${esc(t.globalHint)}</p><div class="section-controls">${source + algorithm + range("intensity", t.intensity, t.intensityDesc) + range("saturation", t.saturation) + range("minimum_brightness", t.minBrightness) + range("brightness", t.brightness)}</div></section>`;
     return `<section class="card settings-accordion">
-      ${section("basics", t.basics, source + algorithm + range("intensity", t.intensity, t.intensityDesc) + range("saturation", t.saturation) + range("minimum_brightness", t.minBrightness) + range("brightness", t.brightness))}
       ${section("speed", t.speed, range("poll_rate", t.pollRate, t.pollRateDesc) + range("update_rate", t.fps, t.fpsDesc) + range("transition", t.transition) + range("smoothing", t.smoothing) + range("threshold", t.threshold))}
       ${section("dark", t.darkScenes, `<p class="section-note">${esc(t.darkShort)}</p>` + range("black_threshold", t.blackThreshold, t.blackThresholdDesc) + range("black_hold_ms", t.blackHold, t.blackHoldDesc) + range("fade_to_black", t.fadeBlack, t.fadeBlackDesc) + range("off_delay", t.offDelay, t.offDelayDesc))}
       ${section("cuts", t.sceneCuts, range("scene_cut_threshold", t.sceneCutThreshold, t.sceneCutThresholdDesc) + range("scene_cut_transition", t.sceneCutTransition, t.sceneCutTransitionDesc))}
@@ -421,7 +426,7 @@ class AmbilightSyncPanel extends HTMLElement {
     const overrides = this.currentPreset?.lights?.[entityId]?.overrides || {};
     const enabled = Object.prototype.hasOwnProperty.call(overrides, "color_mode");
     const value = enabled ? overrides.color_mode : this._globalValue("color_mode");
-    return `<div class="override-row"><label class="override-check"><input type="checkbox" data-override-check="color_mode" ${enabled ? "checked" : ""}><span>${esc(this.t.colorMode)}</span></label><select data-override-value="color_mode" ${enabled ? "" : "disabled"}><option value="average" ${value === "average" ? "selected" : ""}>${esc(this.t.average)}</option><option value="perceptual" ${value === "perceptual" ? "selected" : ""}>${esc(this.t.perceptual)}</option><option value="dominant" ${value === "dominant" ? "selected" : ""}>${esc(this.t.dominant)}</option></select></div>`;
+    return `<div class="override-row"><label class="override-check"><input type="checkbox" data-override-check="color_mode" ${enabled ? "checked" : ""}><span>${esc(this.t.colorMode)}</span></label><select aria-label="${esc(this.t.colorMode)}" data-override-value="color_mode" ${enabled ? "" : "disabled"}><option value="average" ${value === "average" ? "selected" : ""}>${esc(this.t.average)}</option><option value="perceptual" ${value === "perceptual" ? "selected" : ""}>${esc(this.t.perceptual)}</option><option value="dominant" ${value === "dominant" ? "selected" : ""}>${esc(this.t.dominant)}</option></select></div>`;
   }
 
   _zoneOptions(selected) {
@@ -509,7 +514,7 @@ class AmbilightSyncPanel extends HTMLElement {
     const rgb = preview?.output_rgb || [60,60,60];
     const inputRgb = preview?.input_rgb || null;
     const spatialMap = preview?.spatial_map || [];
-    const sourceRows = sources.map((source, index) => `<div class="source-row" data-source-index="${index}"><select data-source-zone>${this._zoneOptions(source.zone)}</select><label class="weight"><input data-source-weight type="number" min="1" max="1000" step="1" value="${esc(source.weight ?? 100)}"><span>%</span></label><button class="icon-btn" data-remove-source="${index}" title="${esc(t.removeSource)}">×</button></div>`).join("");
+    const sourceRows = sources.map((source, index) => `<div class="source-row" data-source-index="${index}"><select data-source-zone aria-label="${esc(t.sourceZone)}">${this._zoneOptions(source.zone)}</select><label class="weight"><input data-source-weight aria-label="${esc(t.weight)}" type="number" min="1" max="1000" step="1" value="${esc(source.weight ?? 100)}"><span>%</span></label><button class="icon-btn" data-remove-source="${index}" title="${esc(t.removeSource)}">×</button></div>`).join("");
     const overrideCount = Object.keys(cfg.overrides || {}).length;
     const previewText = inputRgb ? `${t.input} rgb(${inputRgb.join(", ")}) · ${t.output} rgb(${rgb.join(", ")}) · ${Math.round((preview.brightness || 0) / 255 * 100)}%` : "—";
     const diagText = diag ? `${t.targetRate} ${diag.target_rate_hz} Hz · ${t.queuedRate} ${diag.queued_rate_hz} Hz · ${t.actualRate} ${diag.actual_rate_hz} Hz · cuts ${diag.scene_cuts ?? 0} (${diag.scene_cut_score ?? 0}%) · ${t.replaced} ${diag.replaced_frames} · ${t.latency} ${diag.avg_latency_ms} ms` : "—";
@@ -517,7 +522,7 @@ class AmbilightSyncPanel extends HTMLElement {
     const top = Math.max(0, Math.min(100, (posY + 100) / 2));
 
     return `<section class="light-card" data-light-card data-entity="${esc(entityId)}">
-      <div class="light-head"><div class="preview-dot" data-preview="${esc(entityId)}" style="background:rgb(${rgb.join(",")})"></div><div class="light-name"><strong>${esc(this._lightName(entityId))}</strong></div><button class="remove-light" data-remove-light="${esc(entityId)}">${esc(t.removeLight)}</button></div>
+      <div class="light-head"><div class="preview-dot" data-preview="${esc(entityId)}" style="background:rgb(${rgb.join(",")})"></div><div class="light-name"><strong>${esc(this._lightName(entityId))}</strong></div><button class="remove-light" data-remove-light="${esc(entityId)}" title="${esc(t.removeLight)}" aria-label="${esc(t.removeLight)}: ${esc(this._lightName(entityId))}">×</button></div>
       <details class="light-diagnostics"><summary>${esc(t.diagnostics)}</summary><small>${esc(entityId)}</small>
       <div class="preview-line"><span>${esc(t.preview)}</span><span data-preview-text="${esc(entityId)}">${esc(previewText)}</span></div>
       <div class="diagnostic-line"><span>${esc(t.diagnostics)}</span><span data-diagnostics-text="${esc(entityId)}">${esc(diagText)}</span></div>
@@ -611,6 +616,7 @@ class AmbilightSyncPanel extends HTMLElement {
       this.profile.presets[id] = { name: name.trim(), global: clone(this.currentPreset?.global || {}), lights: {} };
     }
     this._editPresetId = id;
+    this._markDirty();
     this._render();
   }
 
@@ -620,6 +626,7 @@ class AmbilightSyncPanel extends HTMLElement {
     const name = window.prompt(this.t.presetName, this.currentPreset.name);
     if (!name?.trim()) return;
     this.currentPreset.name = name.trim();
+    this._markDirty();
     this._render();
   }
 
@@ -633,6 +640,7 @@ class AmbilightSyncPanel extends HTMLElement {
     const next = Object.keys(this.profile.presets)[0];
     if (this.profile.active_preset === deleting) this.profile.active_preset = next;
     this._editPresetId = next;
+    this._markDirty();
     this._render();
   }
 
@@ -640,11 +648,12 @@ class AmbilightSyncPanel extends HTMLElement {
     this._readCurrentPresetControls();
     if (!entityId || !this.currentPreset || this.currentPreset.lights[entityId]) return;
     this.currentPreset.lights[entityId] = { position_mode: "spatial", position_x: 0, position_y: 0, position_falloff: 45, sources: [{ zone: "all", weight: 100 }], overrides: {} };
+    this._markDirty();
     this._render();
   }
-  _removeLight(entityId) { this._readCurrentPresetControls(); if (this.currentPreset?.lights?.[entityId]) { delete this.currentPreset.lights[entityId]; this._render(); } }
-  _addSource(entityId) { this._readCurrentPresetControls(); const l=this.currentPreset?.lights?.[entityId]; if(l){ l.sources ||= []; l.sources.push({zone:"all",weight:100}); this._render(); } }
-  _removeSource(entityId,index) { this._readCurrentPresetControls(); const l=this.currentPreset?.lights?.[entityId]; if(!l) return; if((l.sources||[]).length<=1) return; l.sources.splice(index,1); this._render(); }
+  _removeLight(entityId) { this._readCurrentPresetControls(); if (this.currentPreset?.lights?.[entityId]) { delete this.currentPreset.lights[entityId]; this._markDirty(); this._render(); } }
+  _addSource(entityId) { this._readCurrentPresetControls(); const l=this.currentPreset?.lights?.[entityId]; if(l){ l.sources ||= []; l.sources.push({zone:"all",weight:100}); this._markDirty(); this._render(); } }
+  _removeSource(entityId,index) { this._readCurrentPresetControls(); const l=this.currentPreset?.lights?.[entityId]; if(!l) return; if((l.sources||[]).length<=1) return; l.sources.splice(index,1); this._markDirty(); this._render(); }
 
   async _save(activate = false) {
     if (!this.currentEntry || !this.profile || this._saving) return;
@@ -657,13 +666,18 @@ class AmbilightSyncPanel extends HTMLElement {
       const idx = this._entries.findIndex((e) => e.entry_id === updated.entry_id);
       if (idx >= 0) this._entries[idx] = updated;
       this._draft = clone(updated);
+      this._dirty = false;
       this._lastStatus = updated.status;
       if (!this.profile.presets[this._editPresetId]) this._editPresetId = this.profile.active_preset;
       this._updateStatusDom(updated.status);
       this._updateDiagnosticsDom(updated.status?.diagnostics || {});
       this._setSaveState(activate ? this.t.activated : this.t.saved, false);
       this._updatePresetBadge();
-      window.setTimeout(() => this._setSaveState(this.t.save, false), 1400);
+      window.setTimeout(() => {
+        this._setSaveState(this.t.save, false);
+        const footer = this.shadowRoot?.querySelector(".actions");
+        if (footer && !this._dirty && !this._saving) footer.hidden = true;
+      }, 1400);
     } catch (err) {
       this._setSaveState(`${this.t.saveError}: ${err?.message || err}`, false, true);
     } finally { this._saving = false; }
@@ -724,6 +738,7 @@ class AmbilightSyncPanel extends HTMLElement {
   }
 
   _updatePreviewDom(previews) {
+    this._updateAmbientPreview(previews);
     if (this.profile?.active_preset !== this._editPresetId) return;
     const debug = this.shadowRoot?.getElementById("debug-pipeline");
     const selectedDebugLight = this.shadowRoot?.getElementById("debug-light")?.value;
@@ -772,9 +787,17 @@ class AmbilightSyncPanel extends HTMLElement {
     if (activate) activate.disabled = isActive;
   }
 
+  _markDirty() {
+    this._dirty = true;
+    const footer = this.shadowRoot?.querySelector(".actions");
+    if (footer) footer.hidden = false;
+  }
+
   _setSaveState(text, disabled, error=false) {
     const btn = this.shadowRoot?.getElementById("save");
     if (!btn) return;
+    const footer = btn.closest(".actions");
+    if (footer) footer.hidden = false;
     btn.textContent = text; btn.disabled = disabled; btn.classList.toggle("save-error", error);
   }
 
@@ -782,6 +805,7 @@ class AmbilightSyncPanel extends HTMLElement {
     const key = input.id || input.dataset.overrideValue;
     const meta = RANGE_META[key];
     if (!meta) return;
+    this._syncRangeFill(input);
     const unit = meta[3] ? this.t[meta[3]] : "";
     let output = null;
     if (input.id) output = this.shadowRoot.getElementById(`${input.id}_out`);
@@ -814,6 +838,36 @@ class AmbilightSyncPanel extends HTMLElement {
 
   _wireEvents() {
     const root = this.shadowRoot;
+    const markInput = (event) => {
+      if (!event.target.matches("input, select") || ["entry-select", "preset-select", "debug-light"].includes(event.target.id)) return;
+      this._markDirty();
+    };
+    if (this._draftInputListener) {
+      root.removeEventListener("input", this._draftInputListener);
+      root.removeEventListener("change", this._draftInputListener);
+    }
+    this._draftInputListener = markInput;
+    root.addEventListener("input", markInput);
+    root.addEventListener("change", markInput);
+    root.querySelectorAll("[data-tab]").forEach((button) => {
+      button.addEventListener("click", () => this._showTab(button.dataset.tab));
+      button.addEventListener("keydown", (event) => {
+        const tabs = [...root.querySelectorAll("[data-tab]")];
+        const index = tabs.indexOf(button);
+        const next = event.key === "ArrowRight" ? (index + 1) % tabs.length : event.key === "ArrowLeft" ? (index + tabs.length - 1) % tabs.length : event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 : -1;
+        if (next < 0) return;
+        event.preventDefault(); this._showTab(tabs[next].dataset.tab); tabs[next].focus();
+      });
+    });
+    root.querySelectorAll('input[type="range"]').forEach((input) => {
+      this._syncRangeFill(input);
+      input.addEventListener("input", () => this._syncRangeFill(input));
+      if (!input.hasAttribute("aria-label") && !input.labels?.length) {
+        const label = input.closest(".override-row")?.querySelector(".override-check span") || input.closest(".position-range")?.querySelector("span");
+        if (label) input.setAttribute("aria-label", label.textContent);
+      }
+    });
+    this._updateAmbientPreview(this._lastStatus?.previews || {});
     root.getElementById("debug-toggle")?.addEventListener("click", () => {
       this._debugVisible = !this._debugVisible;
       root.getElementById("debug-settings").hidden = !this._debugVisible;
@@ -829,6 +883,7 @@ class AmbilightSyncPanel extends HTMLElement {
       this._updateSettingsSummaries();
     });
     root.getElementById("debug-reset")?.addEventListener("click", () => {
+      this._markDirty();
       for (const key of ["neutral_strength", "neutral_noise_floor"]) {
         const input = root.getElementById(key);
         input.value = NEW_DEFAULTS[key];
@@ -838,6 +893,7 @@ class AmbilightSyncPanel extends HTMLElement {
     root.getElementById("entry-select")?.addEventListener("change", (e) => {
       this._readCurrentPresetControls();
       this._entryId = e.target.value;
+      this._dirty = false;
       const entry = this.currentEntry;
       this._draft = entry ? clone(entry) : null;
       this._editPresetId = this.profile?.active_preset || Object.keys(this.profile?.presets || {})[0] || null;
@@ -909,6 +965,60 @@ class AmbilightSyncPanel extends HTMLElement {
     root.querySelectorAll('input[type="range"][data-override-value]').forEach((input) => input.addEventListener("input", () => this._updateRangeOutput(input)));
   }
 
+  _showTab(tab) {
+    if (!["atmosphere", "lights", "settings"].includes(tab)) return;
+    this._tab = tab;
+    this.shadowRoot.querySelectorAll("[data-tab]").forEach((button) => {
+      const active = button.dataset.tab === tab;
+      button.setAttribute("aria-selected", String(active));
+      button.tabIndex = active ? 0 : -1;
+    });
+    this.shadowRoot.querySelectorAll("[data-tab-panel]").forEach((panel) => {
+      panel.hidden = panel.dataset.tabPanel !== tab;
+    });
+  }
+
+  _syncRangeFill(input) {
+    const min = Number(input.min || 0), max = Number(input.max || 100);
+    const fill = max > min ? Math.max(0, Math.min(100, (Number(input.value) - min) / (max - min) * 100)) : 0;
+    input.style.setProperty("--range-fill", `${fill}%`);
+  }
+
+  _updateAmbientPreview(previews) {
+    const stage = this.shadowRoot?.getElementById("ambient-stage");
+    if (!stage) return;
+    const valid = (rgb) => Array.isArray(rgb) && rgb.length === 3 && rgb.every(Number.isFinite);
+    const colors = Object.values(previews || {}).map((preview) => {
+      // Output RGB is a normalized hue: lamp brightness is sent separately.
+      // Showing that hue alone would brighten dark TV samples in the preview.
+      if (valid(preview.input_rgb)) return preview.input_rgb;
+      if (!valid(preview.output_rgb) || !Number.isFinite(preview.brightness)) return null;
+      const brightness = Math.max(0, Math.min(255, preview.brightness)) / 255;
+      return preview.output_rgb.map((value) => value * brightness);
+    }).filter(valid);
+    stage.classList.toggle("has-colors", colors.length > 0);
+    const empty = this.shadowRoot.getElementById("ambient-waiting");
+    if (empty) empty.hidden = colors.length > 0;
+    for (let i = 0; i < 4; i++) {
+      const rgb = colors.length ? colors[Math.floor(i * colors.length / 4)] : [0, 0, 0];
+      const color = `rgb(${rgb.map((v) => Math.round(Math.max(0, Math.min(255, v)))).join(",")})`;
+      stage.querySelectorAll(`[data-ambient-color="${i}"]`).forEach((pixel) => {
+        pixel.style.backgroundColor = color;
+      });
+    }
+  }
+
+  _lightCountLabel(count) {
+    if (this.t !== TEXT.ru) return `${count} ${count === 1 ? "light" : "lights"}`;
+    const last = count % 10, two = count % 100;
+    const word = two >= 11 && two <= 14 ? "светильников" : last === 1 ? "светильник" : last >= 2 && last <= 4 ? "светильника" : "светильников";
+    return `${count} ${word}`;
+  }
+
+  _brandMarkup() {
+    return `<header><div class="brand"><div class="logo" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><rect x="3" y="4" width="18" height="13" rx="3" stroke="currentColor" stroke-width="1.6"/><path d="M8 21h8m-4-4v4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></div><div class="head-copy"><h1>${esc(this.t.title)}</h1><p>${esc(this.t.subtitle)}</p></div></div><span class="version" aria-label="${esc(this.t.version)} 0.4.1">0.4.1</span></header>`;
+  }
+
   _renderLoading() { this.shadowRoot.innerHTML = `<style>${this._css()}</style><main><div class="loading">Ambilight Sync…</div></main>`; }
   _renderError(message) { this.shadowRoot.innerHTML = `<style>${this._css()}</style><main><div class="error-card">${esc(message)}</div></main>`; }
 
@@ -916,7 +1026,7 @@ class AmbilightSyncPanel extends HTMLElement {
     const t = this.t;
     const entry = this.currentEntry;
     if (!entry || !this.profile || !this.currentPreset) {
-      this.shadowRoot.innerHTML = `<style>${this._css()}</style><main><header><div class="logo">A</div><div><h1>${esc(t.title)}</h1><p>${esc(t.subtitle)}</p></div></header><div class="empty-state">${esc(t.noEntries)}</div></main>`;
+      this.shadowRoot.innerHTML = `<style>${this._css()}</style><main>${this._brandMarkup()}<div class="empty-state">${esc(t.noEntries)}</div></main>`;
       return;
     }
 
@@ -929,54 +1039,124 @@ class AmbilightSyncPanel extends HTMLElement {
     const usedLights = new Set(Object.keys(preset.lights || {}));
     const availableLights = this._allLights().filter((id) => !usedLights.has(id)).map((id) => `<option value="${esc(id)}">${esc(this._lightName(id))}</option>`).join("");
     const lightCards = Object.keys(preset.lights || {}).sort((a,b) => this._lightName(a).localeCompare(this._lightName(b))).map((id) => this._lightCard(id)).join("");
-    const colorMode = g.color_mode || "average";
-
     this.shadowRoot.innerHTML = `<style>${this._css()}</style><main>
-      <header><div class="logo">A</div><div class="head-copy"><h1>${esc(t.title)}</h1><p>${esc(t.subtitle)}</p></div></header>
+      ${this._brandMarkup()}
+      <nav class="primary-nav" role="tablist" aria-label="${esc(t.title)}">
+        ${[["atmosphere",t.atmosphere],["lights",t.lights],["settings",t.settings]].map(([id,label]) => `<button id="nav-${id}" type="button" role="tab" data-tab="${id}" aria-selected="${this._tab === id}" aria-controls="panel-${id}" tabindex="${this._tab === id ? 0 : -1}">${esc(label)}</button>`).join("")}
+      </nav>
+      <div id="status-error" role="alert" class="status-error" ${status.last_error ? "" : "hidden"}>${status.last_error ? esc(`${t.error}: ${status.last_error}`) : ""}</div>
 
-      <section class="topbar card">
-        <label class="tv-control"><span>${esc(t.tv)}</span><select id="entry-select">${entryOptions}</select></label>
-        <div class="sync-control">
-          <div class="sync-copy"><span class="eyebrow">${esc(t.syncControl)}</span><strong id="sync-status" class="sync-status ${status.running ? "on" : ""}">${esc(status.running ? t.running : t.stopped)}</strong><small>${esc(t.syncHint)}</small></div>
-          <button id="sync-toggle" class="sync-toggle ${status.running ? "on" : ""}" aria-pressed="${status.running ? "true" : "false"}">${esc(status.running ? t.turnOff : t.turnOn)}</button>
-        </div>
-        <div class="top-diagnostics"><span class="eyebrow">${esc(t.tvDiagnostics)}</span><strong id="tv-diagnostics">${esc(t.targetRate)} ${status?.diagnostics?.tv?.target_poll_rate_hz ?? g.poll_rate} Hz · ${esc(t.actualRate)} ${status?.diagnostics?.tv?.actual_poll_rate_hz ?? 0} Hz</strong></div>
-      </section>
-      <div id="status-error" class="status-error" ${status.last_error ? "" : "hidden"}>${status.last_error ? esc(`${t.error}: ${status.last_error}`) : ""}</div>
+      <div id="panel-atmosphere" role="tabpanel" aria-labelledby="nav-atmosphere" data-tab-panel="atmosphere" ${this._tab === "atmosphere" ? "" : "hidden"}>
+        <section class="topbar card">
+          <div class="ambient-stage" id="ambient-stage" role="img" aria-label="${esc(t.liveHint)}"><div class="ambient-glow ambient-pixels" aria-hidden="true">${[0,1,3,2].map((i) => `<span data-ambient-color="${i}"></span>`).join("")}</div><div class="ambient-screen" aria-hidden="true"><div class="screen-colors ambient-pixels">${[0,1,3,2].map((i) => `<span data-ambient-color="${i}"></span>`).join("")}</div><svg viewBox="0 0 24 24" fill="none"><rect x="3" y="4" width="18" height="13" rx="3" stroke="currentColor" stroke-width="1.2"/><path d="M8 21h8m-4-4v4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg></div><span class="ambient-label">${esc(t.liveColors)}</span></div>
+          <div class="hero-info">
+            <strong id="sync-status" class="sync-status ${status.running ? "on" : ""}">${esc(status.running ? t.running : t.stopped)}</strong>
+            <label class="tv-control"><span>${esc(t.tv)}</span><select id="entry-select">${entryOptions}</select></label>
+            <p id="ambient-waiting" class="preview-waiting">${esc(t.previewWaiting)}</p>
+            <div class="hero-actions"><button id="sync-toggle" class="sync-toggle ${status.running ? "on" : ""}" aria-pressed="${status.running ? "true" : "false"}">${esc(status.running ? t.turnOff : t.turnOn)}</button><span class="light-count">${esc(this._lightCountLabel(usedLights.size))}</span></div>
+          </div>
+        </section>
 
-      <div class="section-title"><div><h2>${esc(t.presets)}</h2><p>${esc(t.serviceHint)}</p></div></div>
-      <section class="card preset-card"><label class="preset-select-wrap"><span>${esc(t.preset)}</span><div class="preset-select-line"><select id="preset-select">${presetOptions}</select><span id="active-preset-badge" class="active-badge" ${isActive ? "" : "hidden"}>${esc(t.active)}</span></div></label><div class="preset-actions"><button id="create-preset" class="secondary">${esc(t.create)}</button><button id="duplicate-preset" class="secondary">${esc(t.duplicate)}</button><button id="rename-preset" class="secondary">${esc(t.rename)}</button><button id="delete-preset" class="secondary danger">${esc(t.delete)}</button><button id="activate-preset" class="secondary accent" ${isActive ? "disabled" : ""}>${esc(t.activate)}</button></div></section>
+        <section class="card preset-card"><div class="preset-heading"><h2>${esc(t.presets)}</h2><span id="active-preset-badge" class="active-badge" ${isActive ? "" : "hidden"}>${esc(t.active)}</span></div><label class="preset-select-wrap"><span>${esc(t.preset)}</span><select id="preset-select">${presetOptions}</select></label><div class="preset-actions"><button id="activate-preset" class="primary" ${isActive ? "disabled" : ""}>${esc(t.activate)}</button><button id="create-preset" class="secondary">${esc(t.create)}</button><button id="duplicate-preset" class="secondary">${esc(t.duplicate)}</button><button id="rename-preset" class="secondary">${esc(t.rename)}</button><button id="delete-preset" class="secondary danger">${esc(t.delete)}</button></div></section>
+        ${this._settingsMarkup(g, true)}
+      </div>
 
-      <div class="section-title"><div><h2>${esc(t.global)}</h2><p>${esc(t.globalHint)}</p></div></div>
-      ${this._settingsMarkup(g)}
+      <div id="panel-lights" role="tabpanel" aria-labelledby="nav-lights" data-tab-panel="lights" ${this._tab === "lights" ? "" : "hidden"}>
+        <div class="section-title lights-title"><div><h2>${esc(t.lights)}</h2><p>${esc(t.lightsHint)}</p></div><select id="add-light" aria-label="${esc(t.addLight)}"><option value="">${esc(t.addLight)}</option>${availableLights}</select></div>
+        <div class="lights-grid">${lightCards || `<div class="empty-state">${esc(t.noLights)}</div>`}</div>
+      </div>
 
-      <div class="section-title lights-title"><div><h2>${esc(t.lights)}</h2><p>${esc(t.lightsHint)}</p></div><select id="add-light"><option value="">${esc(t.addLight)}</option>${availableLights}</select></div>
-      <div class="lights-grid">${lightCards || `<div class="empty-state">${esc(t.noLights)}</div>`}</div>
+      <div id="panel-settings" role="tabpanel" aria-labelledby="nav-settings" data-tab-panel="settings" ${this._tab === "settings" ? "" : "hidden"}>
+        <div class="section-title"><div><h2>${esc(t.settings)}</h2><p>${esc(t.globalHint)}</p></div></div>
+        ${this._settingsMarkup(g)}
+        <section class="card behavior-card"><label class="check-row restore-control"><input id="restore_on_stop" type="checkbox" ${g.restore_on_stop !== false ? "checked" : ""}><span>${esc(t.restore)}</span></label><p>${esc(t.syncHint)}</p></section>
+        <section class="card diagnostics-card"><div class="diagnostics-heading"><h2>${esc(t.diagnostics)}</h2><span class="eyebrow">${esc(t.tvDiagnostics)}</span></div><p id="tv-diagnostics">${esc(t.targetRate)} ${status?.diagnostics?.tv?.target_poll_rate_hz ?? g.poll_rate} Hz · ${esc(t.actualRate)} ${status?.diagnostics?.tv?.actual_poll_rate_hz ?? 0} Hz</p><p>${esc(t.serviceHint)}</p></section>
+      </div>
 
-      <label class="check-row restore-control"><input id="restore_on_stop" type="checkbox" ${g.restore_on_stop !== false ? "checked" : ""}><span>${esc(t.restore)}</span></label>
-
-      <div class="actions"><span class="save-hint">${esc(t.saveHint)}</span><button id="save" class="primary">${esc(t.save)}</button></div>
+      <div class="actions" ${this._dirty ? "" : "hidden"}><span class="save-hint">${esc(t.saveHint)}</span><button id="save" class="primary" aria-live="polite">${esc(t.save)}</button></div>
     </main>`;
     this._wireEvents();
   }
 
   _css() { return `
-    :host{display:block;container-type:inline-size;min-height:100%;background:var(--primary-background-color);color:var(--primary-text-color);font-family:var(--paper-font-body1_-_font-family,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif)}*{box-sizing:border-box}[hidden]{display:none!important}
-    #debug-toggle{margin-top:12px;font-size:12px}.debug-pipeline select{display:block;margin-top:10px;width:100%}.light-diagnostics{margin:14px 0;color:var(--secondary-text-color);font-size:12px}.light-diagnostics>summary{cursor:pointer}.light-diagnostics>small{display:block;margin-top:10px;overflow-wrap:anywhere}
-    .settings-accordion{overflow:visible}.settings-section+.settings-section{border-top:1px solid var(--divider-color)}.settings-toggle{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;padding:14px 18px;background:transparent;border:0;color:inherit;text-align:left;border-radius:14px}.settings-toggle:hover{background:color-mix(in srgb,var(--primary-color) 5%,transparent)}.settings-toggle strong{display:block;font-size:15px}.settings-toggle small{display:block;margin-top:4px;font-size:12px;line-height:1.4;color:var(--secondary-text-color);overflow-wrap:anywhere}.chevron{font-size:25px;color:var(--secondary-text-color);transition:transform .15s}.settings-toggle[aria-expanded=true] .chevron{transform:rotate(90deg)}.section-controls{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px 24px;padding:4px 18px 18px}.section-note{font-size:12px;grid-column:1/-1;line-height:1.45}.control-heading{display:flex;align-items:center;justify-content:space-between;gap:8px}.control{min-width:0}.control-title{overflow-wrap:anywhere}.control select{width:100%;min-width:0}.restore-control{margin:18px 2px}.debug-settings{padding:14px 18px;margin-top:14px}.debug-settings>summary,.position-settings>summary{cursor:pointer;font-weight:650;font-size:14px}.debug-settings>p{font-size:12px;margin:10px 0}.debug-settings .section-controls{padding:8px 0}.debug-pipeline{grid-column:1/-1;min-width:0;font-size:12px}.debug-pipeline pre{font:12px/1.6 ui-monospace,monospace;white-space:pre-wrap;overflow-wrap:anywhere;margin:10px 0 0}.position-settings>summary{margin:4px 0 12px}.position-settings[open]{margin-bottom:10px}.info-tip{position:relative;flex:none;font-size:14px;color:var(--secondary-text-color)}.info-tip>summary{cursor:pointer;list-style:none;width:28px;height:28px;display:grid;place-items:center;border-radius:50%}.info-tip>summary::-webkit-details-marker{display:none}.info-content{display:none;position:absolute;right:0;top:30px;width:min(270px,72vw);padding:12px;border:1px solid var(--divider-color);border-radius:10px;background:var(--card-background-color);color:var(--primary-text-color);box-shadow:0 6px 22px #0004;z-index:12;font-size:12px;line-height:1.5;text-transform:none;letter-spacing:normal;font-weight:400}.info-tip[open]>.info-content,.info-tip:hover>.info-content{display:block}.range-row{min-width:0}.range-row input{min-width:0}.topbar>*{min-width:0}.top-diagnostics strong{white-space:normal!important}.preview-line,.diagnostic-line{overflow-wrap:anywhere}.settings-toggle:focus-visible,.info-tip summary:focus-visible{outline:2px solid var(--primary-color);outline-offset:2px}
-    main{max-width:1180px;margin:0 auto;padding:26px 24px 78px}header{display:flex;align-items:center;gap:14px;margin-bottom:18px}.logo{width:44px;height:44px;border-radius:13px;display:grid;place-items:center;background:var(--primary-color);color:#fff;font-size:22px;font-weight:800;flex:none}.head-copy{flex:1}h1{font-size:29px;line-height:1.08;margin:1px 0 4px}h2{font-size:21px;margin:0}p{margin:0;color:var(--secondary-text-color);line-height:1.45}.status-error{margin:10px 2px 0;padding:9px 12px;border-radius:10px;background:color-mix(in srgb,var(--error-color,#db4437) 10%,transparent);font-size:12px;color:var(--error-color,#db4437)}
-    .card,.light-card{background:var(--card-background-color);border:1px solid var(--divider-color);border-radius:16px;box-shadow:var(--ha-card-box-shadow,none)}.topbar{padding:16px 18px;display:grid;grid-template-columns:minmax(240px,330px) minmax(330px,1fr) auto;gap:20px;align-items:center}.topbar label,.control,.preset-select-wrap{display:flex;flex-direction:column;gap:7px}.topbar label>span,.control-title,.preset-select-wrap>span,.eyebrow{font-size:11px;font-weight:750;color:var(--secondary-text-color);text-transform:uppercase;letter-spacing:.055em}.sync-control{display:flex;align-items:center;justify-content:space-between;gap:18px;padding-left:18px;border-left:1px solid var(--divider-color)}.sync-copy{display:flex;flex-direction:column;gap:4px;min-width:0}.sync-copy small{font-size:11px;line-height:1.35;color:var(--secondary-text-color);max-width:430px}.sync-status{font-size:14px}.sync-status.on{color:var(--success-color,#43a047)}.sync-toggle{min-width:102px;border:1px solid var(--primary-color);border-radius:11px;padding:10px 14px;background:transparent;color:var(--primary-color);font-weight:750}.sync-toggle.on{border-color:var(--error-color,#db4437);color:var(--error-color,#db4437)}.sync-toggle:disabled{opacity:.55;cursor:default}.top-diagnostics{display:flex;flex-direction:column;gap:5px;align-items:flex-end;text-align:right;padding-left:18px;border-left:1px solid var(--divider-color)}.top-diagnostics strong{font-size:12px;font-weight:650;white-space:nowrap;color:var(--secondary-text-color)}
-    select,input,button{font:inherit}select,input[type=number]{border:1px solid var(--divider-color);border-radius:10px;padding:10px 11px;background:var(--secondary-background-color);color:var(--primary-text-color);outline:none}select:focus,input[type=number]:focus{border-color:var(--primary-color)}button{cursor:pointer}.section-title{display:flex;justify-content:space-between;gap:20px;align-items:end;margin:26px 2px 11px}.section-title p{margin-top:5px;font-size:13px;max-width:900px}.lights-title select{width:min(320px,42vw)}
-    .preset-card{padding:17px 18px;display:grid;grid-template-columns:minmax(260px,390px) 1fr;gap:18px;align-items:end}.preset-select-line{display:flex;gap:10px;align-items:center}.preset-select-line select{flex:1}.active-badge{padding:7px 10px;border-radius:999px;background:color-mix(in srgb,var(--success-color,#43a047) 18%,var(--card-background-color));color:var(--success-color,#43a047);font-size:12px;font-weight:800}.preset-actions{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end}.secondary{border:1px solid var(--divider-color);border-radius:10px;padding:9px 12px;background:var(--secondary-background-color);color:var(--primary-text-color);font-weight:650}.secondary:hover{border-color:var(--primary-color)}.secondary:disabled{opacity:.45;cursor:default}.secondary.accent{border-color:var(--primary-color);color:var(--primary-color)}.secondary.danger{color:var(--error-color,#db4437)}
-    .settings-grid{padding:18px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px 24px}.settings-subgroup{grid-column:1/-1;margin-top:2px;padding:15px;border:1px solid var(--divider-color);border-radius:13px;background:color-mix(in srgb,var(--secondary-background-color) 58%,transparent)}.subgroup-title{display:flex;align-items:baseline;justify-content:space-between;gap:16px;margin-bottom:14px}.subgroup-title strong{font-size:13px}.subgroup-title small{font-size:11px;color:var(--secondary-text-color);text-align:right;max-width:680px}.subgroup-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px 24px}.range-row{display:grid;grid-template-columns:1fr 76px;gap:12px;align-items:center}.range-row output{text-align:right;font-variant-numeric:tabular-nums;font-size:13px;color:var(--secondary-text-color)}input[type=range]{width:100%;accent-color:var(--primary-color)}.help{display:block;color:var(--secondary-text-color);font-size:12px;line-height:1.45;font-weight:400;text-transform:none;letter-spacing:normal}.check-row{grid-column:1/-1;display:flex;align-items:center;gap:10px;font-size:14px;cursor:pointer}.check-row input,.override-check input{width:18px;height:18px;accent-color:var(--primary-color)}
-    .lights-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.light-card{padding:17px}.light-head{display:grid;grid-template-columns:auto 1fr auto;gap:11px;align-items:center}.preview-dot{width:28px;height:28px;border-radius:50%;box-shadow:0 0 0 1px var(--divider-color),0 3px 12px rgba(0,0,0,.18)}.light-name{min-width:0}.light-name strong,.light-name small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.light-name small{font-size:11px;color:var(--secondary-text-color);margin-top:2px}.remove-light{border:0;background:transparent;color:var(--error-color,#db4437);font-size:12px}.preview-line,.diagnostic-line{display:flex;justify-content:space-between;gap:16px;margin:12px 0 8px;padding:8px 10px;border-radius:10px;background:var(--secondary-background-color);font-size:11px;color:var(--secondary-text-color)}.diagnostic-line{margin-top:0;margin-bottom:16px}.preview-line span:last-child,.diagnostic-line span:last-child{text-align:right}.subhead{font-size:12px;text-transform:uppercase;letter-spacing:.035em;color:var(--secondary-text-color);margin-bottom:8px}.position-mode-control{margin-bottom:10px}.spatial-box{padding:12px;border-radius:12px;background:var(--secondary-background-color);margin-bottom:14px}.position-preview{height:150px;position:relative;border:1px dashed var(--divider-color);border-radius:12px;margin-bottom:8px;overflow:hidden;background:radial-gradient(circle at 50% 50%,color-mix(in srgb,var(--primary-color) 4%,transparent),transparent 62%)}.position-segments{position:absolute;inset:0;z-index:2;pointer-events:none}.ambilight-segment{position:absolute;width:9px;height:9px;border-radius:50%;transform:translate(-50%,-50%) scale(.62);opacity:.07;box-shadow:0 0 0 1px color-mix(in srgb,var(--primary-text-color) 30%,transparent);transition:opacity .12s ease,transform .12s ease,filter .12s ease}.ambilight-segment.active{box-shadow:0 0 0 1px color-mix(in srgb,var(--primary-text-color) 55%,transparent),0 0 8px color-mix(in srgb,var(--primary-color) 32%,transparent)}.tv-shape{position:absolute;z-index:1;left:25%;top:25%;width:50%;height:50%;border:2px solid var(--primary-color);border-radius:8px;display:grid;place-items:center;font-size:12px;font-weight:800;color:var(--primary-color);background:color-mix(in srgb,var(--primary-color) 7%,var(--card-background-color))}.position-point{position:absolute;z-index:4;width:15px;height:15px;border-radius:50%;background:var(--primary-color);box-shadow:0 0 0 4px color-mix(in srgb,var(--primary-color) 20%,transparent),0 2px 10px rgba(0,0,0,.35);transform:translate(-50%,-50%)}.spread-summary{min-height:18px;margin:0 2px 10px;font-size:11px;line-height:1.35;color:var(--secondary-text-color)}.position-range{display:block;font-size:12px;color:var(--secondary-text-color);margin-top:8px}.position-range>span{display:block;margin-bottom:5px}.manual-subhead{margin-top:12px}.source-list{display:flex;flex-direction:column;gap:7px}.source-row{display:grid;grid-template-columns:1fr 100px 34px;gap:7px;align-items:center}.weight{display:flex;align-items:center;gap:4px}.weight input{width:100%;min-width:0}.weight span{font-size:12px;color:var(--secondary-text-color)}.icon-btn{width:34px;height:34px;border:0;border-radius:9px;background:transparent;color:var(--secondary-text-color);font-size:20px}.icon-btn:hover{background:var(--secondary-background-color);color:var(--error-color,#db4437)}.add-source{margin-top:8px;width:100%}
-    .override-box{margin-top:15px;border-top:1px solid var(--divider-color);padding-top:12px}.override-box summary{cursor:pointer;font-weight:750;font-size:14px}.override-box>p{font-size:12px;margin:8px 0 12px}.override-grid{display:flex;flex-direction:column;gap:10px}.override-row{display:grid;grid-template-columns:minmax(150px,.8fr) minmax(180px,1.2fr);gap:12px;align-items:center}.override-check{display:flex;align-items:center;gap:8px;font-size:13px}.override-row select{width:100%}.override-row input:disabled,.override-row select:disabled{opacity:.5}.override-row .range-row{grid-template-columns:1fr 62px}
-    .actions{position:sticky;bottom:0;margin-top:22px;padding:11px 12px;display:flex;align-items:center;justify-content:space-between;gap:20px;border-top:1px solid var(--divider-color);background:color-mix(in srgb,var(--primary-background-color) 92%,transparent);backdrop-filter:blur(10px);z-index:4}.save-hint{font-size:11px;color:var(--secondary-text-color)}button.primary{border:0;border-radius:12px;padding:12px 24px;background:var(--primary-color);color:var(--text-primary-color,#fff);font-weight:800;min-width:160px;box-shadow:0 5px 18px rgba(0,0,0,.12)}button.primary:disabled{opacity:.65;cursor:default}.save-error{background:var(--error-color,#db4437)!important;max-width:520px}.loading,.empty-state,.error-card{padding:32px;border-radius:16px;background:var(--card-background-color);border:1px solid var(--divider-color);color:var(--secondary-text-color)}.error-card{color:var(--error-color,#db4437)}
-    @media(max-width:1000px){.topbar{grid-template-columns:minmax(230px,1fr) minmax(320px,1.4fr)}.top-diagnostics{grid-column:1/-1;align-items:flex-start;text-align:left;border-left:0;border-top:1px solid var(--divider-color);padding:11px 0 0}.lights-grid{grid-template-columns:1fr}.preset-card{grid-template-columns:1fr}.preset-actions{justify-content:flex-start}}
-    @media(max-width:760px){main{padding:18px 12px 68px}header{margin-bottom:15px}.topbar,.settings-grid,.subgroup-grid{grid-template-columns:1fr}.sync-control{padding:14px 0 0;border-left:0;border-top:1px solid var(--divider-color);align-items:flex-start}.sync-copy small{max-width:none}.top-diagnostics{grid-column:auto}.check-row{grid-column:auto}.section-title{align-items:stretch;flex-direction:column}.lights-title select{width:100%}.override-row{grid-template-columns:1fr}.source-row{grid-template-columns:1fr 88px 34px}h1{font-size:26px}.subgroup-title{align-items:flex-start;flex-direction:column;gap:5px}.subgroup-title small{text-align:left}.actions{padding-bottom:max(10px,env(safe-area-inset-bottom));margin-left:-12px;margin-right:-12px}.save-hint{display:none}}
-    @media(max-width:760px){.section-controls{grid-template-columns:1fr;gap:16px}.settings-toggle{padding:13px 14px}.section-controls{padding:4px 14px 16px}.topbar{grid-template-columns:minmax(0,1fr)!important}.preset-select-line select{min-width:0}.light-head{grid-template-columns:auto minmax(0,1fr)}.light-head .remove-light{grid-column:2;justify-self:start}.preview-line,.diagnostic-line{flex-direction:column;gap:4px}.preview-line span:last-child,.diagnostic-line span:last-child{text-align:left!important}.source-row{grid-template-columns:minmax(0,1fr) 68px 30px!important}.source-row select{min-width:0;width:100%}.range-row{grid-template-columns:minmax(0,1fr) 64px!important}}
-    @container(max-width:1000px){.topbar{grid-template-columns:minmax(0,1fr) minmax(0,1.4fr)}.top-diagnostics{grid-column:1/-1;align-items:flex-start;border-left:0;border-top:1px solid var(--divider-color);padding:10px 0 0;text-align:left}.lights-grid,.preset-card{grid-template-columns:1fr}.preset-actions{justify-content:flex-start}}
-    @container(max-width:760px){main{padding:18px 12px 68px}.section-controls{grid-template-columns:1fr;padding:4px 14px 16px}.topbar{grid-template-columns:minmax(0,1fr)!important}.sync-control{padding:14px 0 0;border-left:0;border-top:1px solid var(--divider-color)}.settings-toggle{padding:13px 14px}.section-title{align-items:stretch;flex-direction:column}.lights-title select{width:100%}.preset-select-line select{min-width:0}.override-row{grid-template-columns:1fr}.light-head{grid-template-columns:auto minmax(0,1fr)}.light-head .remove-light{grid-column:2;justify-self:start}.preview-line,.diagnostic-line{flex-direction:column;gap:4px}.preview-line span:last-child,.diagnostic-line span:last-child{text-align:left!important}.source-row{grid-template-columns:minmax(0,1fr) 68px 30px!important}.source-row select{min-width:0;width:100%}.range-row{grid-template-columns:minmax(0,1fr) 64px!important}.actions{margin-left:-12px;margin-right:-12px;padding-bottom:max(10px,env(safe-area-inset-bottom))}.save-hint{display:none}}
+    :host{
+      --ui-bg:#f5f6f9;--ui-surface:#fff;--ui-subtle:#eff2f7;--ui-text:#20242e;--ui-muted:#6b7282;--ui-border:#e4e8ef;
+      --ui-accent:#0088ff;--ui-action:#006edc;--ui-selected:#edf5ff;--ui-green:#2e8065;--ui-green-bg:#e7f3ed;--ui-track:#dee4ec;
+      --ui-error:#c13f4b;--ui-error-bg:#fff1f3;--ui-on-accent:#fff;--ui-shadow:0 6px 28px #1f2b4009;--ui-float:0 4px 14px #1f2b4012;
+      display:block;container-type:inline-size;min-height:100vh;background:var(--ui-bg);color:var(--ui-text);
+      font-family:"SF Pro",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:15px;line-height:1.47;color-scheme:light;
+    }
+    :host([data-theme=dark]){
+      --ui-bg:#000;--ui-surface:#1c1c1c;--ui-subtle:#2c2c2c;--ui-text:#f5f5f5;--ui-muted:#a1a1a1;--ui-border:#3a3a3a;
+      --ui-accent:#f0f0f0;--ui-action:#f2f2f2;--ui-selected:#2b2b2b;--ui-green:#c7c7c7;--ui-green-bg:#2b2b2b;--ui-track:#484848;
+      --ui-error:#dedede;--ui-error-bg:#343434;--ui-on-accent:#101010;--ui-shadow:none;color-scheme:dark;
+    }
+    *{box-sizing:border-box}[hidden]{display:none!important}button,input,select{font:inherit;color:inherit;max-width:100%}
+    button{display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:10px 16px;border:0;border-radius:999px;background:var(--ui-subtle);font-weight:500;line-height:20px;cursor:pointer;transition:background .16s,box-shadow .16s}
+    button:hover{background:color-mix(in srgb,var(--ui-subtle),var(--ui-text) 5%)}button:disabled{opacity:.4;cursor:default}
+    button:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visible{outline:2px solid var(--ui-accent);outline-offset:3px}
+    .primary,.sync-toggle{background:var(--ui-action);color:var(--ui-on-accent)}.primary:hover,.sync-toggle:hover{background:color-mix(in srgb,var(--ui-action),var(--ui-text) 10%)}
+    .sync-toggle.on{background:var(--ui-subtle);color:var(--ui-text)}.secondary.danger,.remove-light{color:var(--ui-error)}.save-error{background:var(--ui-error)!important;color:var(--ui-on-accent)}
+    select,input[type=number]{width:100%;min-width:0;min-height:46px;padding:10px 14px;border:0;border-radius:14px;background:var(--ui-subtle);color:var(--ui-text);font-size:15px;font-weight:500;line-height:20px}
+    select{appearance:none;padding-right:38px;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='m3 4.5 3 3 3-3' fill='none' stroke='%236b7282' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");background-position:right 14px center;background-repeat:no-repeat;cursor:pointer}
+    :host([data-theme=dark]) select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='m3 4.5 3 3 3-3' fill='none' stroke='%23a1a1a1' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")}
+    option{background:var(--ui-surface);color:var(--ui-text)}input:disabled,select:disabled{opacity:.4;cursor:default}
+    input[type=checkbox]{appearance:none;position:relative;flex:0 0 18px;width:18px;height:18px;margin:0;border:1px solid var(--ui-muted);border-radius:4px;background:var(--ui-surface);cursor:pointer}
+    input[type=checkbox]:checked{background:var(--ui-accent);border-color:var(--ui-accent)}input[type=checkbox]:checked:after{content:"";position:absolute;left:5px;top:2px;width:4px;height:8px;border:solid var(--ui-on-accent);border-width:0 2px 2px 0;transform:rotate(45deg)}
+    main{max-width:1080px;margin:auto;padding:32px 28px 40px}header{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:24px}.brand{display:flex;align-items:center;gap:12px;min-width:0}
+    .logo{display:grid;place-items:center;flex:0 0 38px;width:38px;height:38px;color:var(--ui-action);background:var(--ui-selected);border-radius:12px}.logo svg{width:26px;height:26px}
+    h1{font-size:28px;font-weight:600;line-height:34px;letter-spacing:-.7px;margin:0}h2{font-size:20px;font-weight:600;line-height:26px;letter-spacing:-.3px;margin:0 0 16px}
+    p{color:var(--ui-muted);line-height:1.47;margin:8px 0 16px}header p{font-size:13px;line-height:19px;margin:2px 0 0}.version{font-size:12px;color:var(--ui-muted);padding:5px 10px;background:var(--ui-subtle);border-radius:999px;font-variant-numeric:tabular-nums}
+    .primary-nav{display:flex;gap:4px;width:468px;max-width:100%;padding:4px;margin:0 0 24px;border-radius:16px;background:var(--ui-subtle)}
+    .primary-nav button{flex:1;min-width:0;min-height:40px;padding:10px 12px;border-radius:14px;font-size:14px;color:var(--ui-muted);background:none;white-space:nowrap}
+    .primary-nav [aria-selected=true]{color:var(--ui-text);background:var(--ui-surface);box-shadow:var(--ui-float)}
+    .card,.light-card{min-width:0;padding:24px;border:0;border-radius:24px;background:var(--ui-surface);box-shadow:var(--ui-shadow);margin-bottom:20px}
+    .topbar{display:grid;grid-template-columns:240px minmax(0,1fr);gap:40px;align-items:center;padding:32px}.hero-info{min-width:0;display:flex;flex-direction:column;align-items:flex-start;gap:14px}
+    .sync-status,.active-badge{display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border-radius:999px;background:var(--ui-subtle);color:var(--ui-muted);font-size:12px;line-height:18px;font-weight:500}
+    .sync-status.on,.active-badge{background:var(--ui-green-bg);color:var(--ui-green)}.sync-status:before,.active-badge:before{content:"";width:5px;height:5px;background:currentColor;border-radius:50%;flex:none}
+    .tv-control{display:flex;flex-direction:column;gap:6px;width:100%;max-width:420px;font-size:13px;color:var(--ui-muted)}.tv-control select{font-size:20px;font-weight:600;letter-spacing:-.3px;background-color:transparent;padding-left:0;padding-top:0;padding-bottom:0;min-height:36px;border-radius:6px;color:var(--ui-text)}
+    .hero-actions{display:flex;align-items:center;gap:16px;flex-wrap:wrap}.light-count{font-size:13px;color:var(--ui-muted)}.preview-waiting{font-size:13px;margin:0;max-width:360px}
+    .ambient-stage{position:relative;isolation:isolate;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:190px;width:100%}
+    .ambient-pixels{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));grid-template-rows:repeat(2,minmax(0,1fr))}.ambient-pixels>span{background-color:#000;transition:background-color .8s ease-in-out}
+    .ambient-glow{position:absolute;inset:14% 5% 20%;z-index:-1;border-radius:30%;filter:blur(28px);opacity:0;transition:opacity .4s}
+    .has-colors .ambient-glow{opacity:.42}.ambient-screen{position:relative;width:200px;height:126px;border:5px solid #333740;border-radius:16px;background:#000;box-shadow:0 8px 20px #0002;display:grid;place-items:center;overflow:hidden}
+    .ambient-screen svg{width:32px;height:32px;color:#ffffff70;z-index:1}
+    .screen-colors{position:absolute;inset:-48px;filter:blur(22px)}.has-colors .ambient-screen svg{visibility:hidden}
+    .ambient-label{font-size:12px;line-height:18px;margin-top:18px;color:var(--ui-muted);text-align:center}
+    .preset-card{display:grid;grid-template-columns:minmax(220px,1fr) auto;gap:18px 24px;align-items:end}.preset-heading{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;gap:12px}.preset-heading h2{margin:0}
+    .preset-select-wrap{display:flex;flex-direction:column;gap:8px;font-size:13px;color:var(--ui-muted)}.preset-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:flex-end}.preset-actions button{font-size:13px;padding:10px 12px}
+    .intro{font-size:13px;max-width:680px;margin:-6px 0 24px}.section-controls{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:24px 22px;padding:4px 0 24px}.atmosphere-settings .section-controls{padding-bottom:0}
+    .control{display:flex;flex-direction:column;gap:10px;min-width:0}.control-heading{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:24px}.control-title{font-size:14px;font-weight:500;line-height:20px;overflow-wrap:anywhere}
+    .range-row{display:grid;grid-template-columns:minmax(0,1fr) 68px;gap:16px;align-items:center;min-height:32px}.range-row output{font-size:13px;color:var(--ui-muted);font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
+    input[type=range]{appearance:none;-webkit-appearance:none;display:block;min-width:0;width:100%;height:28px;margin:0;background:transparent;cursor:pointer;--range-fill:0%}
+    input[type=range]::-webkit-slider-runnable-track{height:5px;border-radius:999px;background:linear-gradient(to right,var(--ui-accent) var(--range-fill),var(--ui-track) var(--range-fill))}
+    input[type=range]::-webkit-slider-thumb{appearance:none;-webkit-appearance:none;width:22px;height:22px;margin-top:-8.5px;background:var(--ui-surface);border:1px solid var(--ui-border);border-radius:50%;box-shadow:0 2px 6px #0002}
+    input[type=range]::-moz-range-track{height:5px;border-radius:999px;background:var(--ui-track)}input[type=range]::-moz-range-progress{height:5px;border-radius:999px;background:var(--ui-accent)}input[type=range]::-moz-range-thumb{width:20px;height:20px;border:1px solid var(--ui-border);border-radius:50%;background:var(--ui-surface);box-shadow:0 2px 6px #0002}
+    .inactive-control{opacity:.5}.inactive-control input:disabled{opacity:1}.help,small{color:var(--ui-muted);font-size:13px;line-height:19px}.section-note{grid-column:1/-1;font-size:13px;margin:0}
+    .settings-section+.settings-section{border-top:1px solid var(--ui-border)}.settings-toggle{display:flex;align-items:center;justify-content:space-between;gap:16px;width:100%;padding:20px 0;background:none;border-radius:12px;text-align:left}.settings-toggle:hover{background:transparent;color:var(--ui-action)}
+    .settings-toggle strong{display:block;font-size:16px;font-weight:600}.settings-toggle small{display:block;font-size:12px;line-height:18px;margin-top:4px;overflow-wrap:anywhere}.chevron{font-size:26px;color:var(--ui-muted);transition:transform .16s}.settings-toggle[aria-expanded=true] .chevron{transform:rotate(90deg)}
+    .settings-accordion{padding-top:4px;padding-bottom:4px}.section-title{display:flex;align-items:flex-end;justify-content:space-between;gap:24px;margin:0 0 24px}.section-title h2{margin:0 0 8px}.section-title p{font-size:13px;max-width:680px;margin:0}.lights-title select{width:260px;flex-shrink:0}
+    .lights-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px}.light-card{margin:0}.light-head{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:12px;align-items:center;margin-bottom:18px}.preview-dot{width:36px;height:36px;border:5px solid var(--ui-subtle);border-radius:50%;box-shadow:0 0 0 1px var(--ui-border)}
+    .light-name{min-width:0}.light-name strong{display:block;font-size:16px;font-weight:600;line-height:22px;overflow-wrap:anywhere}.remove-light{width:44px;height:44px;padding:0;font-size:24px;background:transparent}.remove-light:hover{background:var(--ui-error-bg)}
+    details>summary{cursor:pointer;list-style:none;display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:44px;font-size:14px;font-weight:500}details>summary::-webkit-details-marker{display:none}details>summary:after{content:"›";font-size:24px;line-height:24px;color:var(--ui-muted);transition:transform .16s}details[open]>summary:after{transform:rotate(90deg)}
+    .light-diagnostics{color:var(--ui-muted);font-size:12px;border-bottom:1px solid var(--ui-border);padding-bottom:8px;margin-bottom:8px}.light-diagnostics>small{display:block;margin:8px 0;overflow-wrap:anywhere;font-size:11px}
+    .preview-line,.diagnostic-line{display:flex;flex-direction:column;gap:4px;padding:12px;border-radius:12px;background:var(--ui-subtle);margin-top:8px;font-size:12px;overflow-wrap:anywhere}.preview-line>span:first-child,.diagnostic-line>span:first-child{font-weight:600;color:var(--ui-text)}
+    .position-settings[open]>summary{margin-bottom:14px}.position-mode-control{margin:0 0 16px}.spatial-box{padding:16px;background:var(--ui-subtle);border-radius:16px;margin-bottom:16px}.position-preview{height:180px;position:relative;border:1px solid var(--ui-border);border-radius:14px;margin-bottom:12px;overflow:hidden;background:var(--ui-surface)}
+    .position-segments{position:absolute;inset:0;z-index:2;pointer-events:none}.ambilight-segment{position:absolute;width:9px;height:9px;border-radius:50%;transform:translate(-50%,-50%) scale(.62);opacity:.07;transition:opacity .12s,transform .12s,filter .12s}.ambilight-segment.active{box-shadow:0 0 0 1px #ffffff40,0 0 8px currentColor}
+    .tv-shape{position:absolute;z-index:1;left:25%;top:25%;width:50%;height:50%;border:2px solid var(--ui-border);border-radius:10px;display:grid;place-items:center;font-size:12px;font-weight:500;color:var(--ui-muted);background:var(--ui-subtle)}
+    .position-point{position:absolute;z-index:4;width:14px;height:14px;border-radius:50%;background:var(--ui-accent);box-shadow:0 0 0 4px color-mix(in srgb,var(--ui-accent) 15%,transparent);transform:translate(-50%,-50%)}
+    .spread-summary{font-size:12px;line-height:18px;color:var(--ui-muted);min-height:18px;margin-bottom:16px}.position-range{display:block;font-size:13px;margin-top:14px}.position-range>span{display:block;margin-bottom:6px}.position-range .help{margin-top:8px}.subhead{font-size:13px;font-weight:500;color:var(--ui-muted);margin:14px 0 10px}.source-list{display:flex;flex-direction:column;gap:8px}.source-row{display:grid;grid-template-columns:minmax(0,1fr) 80px 44px;gap:8px;align-items:center}.weight{display:flex;align-items:center;gap:3px}.weight input{padding:10px 8px;text-align:center}.weight span{font-size:12px;color:var(--ui-muted)}.icon-btn{width:44px;height:44px;padding:0;font-size:22px;background:transparent}.add-source{width:100%;margin-top:12px;font-size:13px}
+    .override-box{border-top:1px solid var(--ui-border);margin-top:8px;padding-top:8px}.override-box>p{font-size:13px;margin:8px 0 20px}.override-grid{display:flex;flex-direction:column;gap:20px}.override-row{display:grid;grid-template-columns:1fr;gap:10px}.override-check{display:flex;align-items:center;gap:10px;min-height:24px;font-size:13px;cursor:pointer}.override-row select{font-size:13px}.check-row{display:flex;align-items:center;gap:12px;font-size:14px;cursor:pointer}.check-row input{flex:0 0 40px;width:40px;height:24px;border:0;border-radius:999px;background:var(--ui-track)}.check-row input:before{content:"";position:absolute;left:3px;top:3px;width:18px;height:18px;border-radius:50%;background:var(--ui-surface);transition:translate .16s}.check-row input:checked{background:var(--ui-accent)}.check-row input:checked:before{translate:16px 0;background:var(--ui-on-accent)}.check-row input:after{display:none}
+    .behavior-card{margin-top:20px}.behavior-card p,.diagnostics-card p{font-size:13px;margin:14px 0 0}.diagnostics-heading{display:flex;align-items:center;justify-content:space-between;gap:16px}.diagnostics-heading h2{margin:0}.eyebrow{color:var(--ui-muted);font-size:12px}
+    .info-tip{position:relative;flex:none;color:var(--ui-muted)}.info-tip>summary{width:28px;min-height:28px;border-radius:50%;display:grid;place-items:center;font-size:16px;font-weight:400}.info-tip>summary:after{display:none}.info-tip>summary:hover{background:var(--ui-subtle)}
+    .info-content{display:none;position:absolute;right:0;top:32px;width:min(280px,72vw);padding:16px;border:1px solid var(--ui-border);border-radius:14px;background:var(--ui-surface);color:var(--ui-text);box-shadow:var(--ui-float);z-index:12;font-size:13px;line-height:19px}.info-tip[open]>.info-content{display:block}
+    #debug-toggle{margin-top:0;font-size:13px}.debug-settings{margin-top:20px}.debug-settings>strong{font-weight:600}.debug-settings>p{font-size:13px}.debug-settings .section-controls{padding-bottom:0}.debug-pipeline{grid-column:1/-1;min-width:0;font-size:13px}.debug-pipeline>strong{font-weight:500}.debug-pipeline select{margin-top:12px}.debug-pipeline pre{font:12px/1.6 ui-monospace,monospace;white-space:pre-wrap;overflow-wrap:anywhere;padding:16px;border-radius:14px;background:var(--ui-subtle)}
+    .actions{position:sticky;bottom:12px;margin-top:24px;display:flex;align-items:center;justify-content:space-between;gap:20px;padding:12px 16px;border:1px solid var(--ui-border);border-radius:20px;background:color-mix(in srgb,var(--ui-surface) 92%,transparent);backdrop-filter:blur(16px);z-index:5;box-shadow:var(--ui-float)}.save-hint{font-size:13px;color:var(--ui-muted)}#save{min-width:136px;overflow-wrap:anywhere}
+    .status-error,.error-card{padding:16px 20px;border-radius:16px;background:var(--ui-error-bg);color:var(--ui-error);font-size:13px;overflow-wrap:anywhere;margin-bottom:20px}.loading,.empty-state{padding:32px;border-radius:24px;background:var(--ui-surface);color:var(--ui-muted);box-shadow:var(--ui-shadow);font-size:14px}.lights-grid>.empty-state{grid-column:1/-1}
+    @container(max-width:900px){.preset-card{grid-template-columns:1fr}.preset-actions{justify-content:flex-start}.lights-grid{grid-template-columns:1fr}.topbar{grid-template-columns:200px minmax(0,1fr);gap:24px}.ambient-screen{width:180px;height:114px}}
+    @container(max-width:600px){main{padding:24px 16px 32px}header{gap:8px}h1{font-size:24px;line-height:30px;letter-spacing:-.5px}header p{font-size:12px}.brand{gap:10px}.logo{width:34px;height:34px;flex-basis:34px}.logo svg{width:24px;height:24px}.version{font-size:11px;padding:4px 7px}.primary-nav{width:100%;margin-bottom:20px}.primary-nav button{font-size:13px;padding:10px 6px}.card,.light-card{padding:24px}.topbar{display:flex;flex-direction:column;gap:20px;text-align:center;padding:28px 24px}.ambient-stage{min-height:166px;max-width:240px}.hero-info{align-items:center;width:100%;gap:12px}.tv-control{align-items:center}.tv-control select{text-align:center;padding-left:24px;font-size:20px}.hero-actions{justify-content:center;gap:12px}.section-controls{grid-template-columns:1fr;gap:22px}.preset-actions{gap:8px}.preset-actions button{font-size:12px;padding:10px 12px}.section-title{flex-direction:column;align-items:stretch;gap:16px}.lights-title select{width:100%}.settings-accordion{padding-top:4px;padding-bottom:4px}.settings-toggle{padding:20px 0}.settings-toggle small{font-size:11px}.settings-toggle strong{font-size:15px}.light-name strong{font-size:15px}.light-head{gap:10px}.spatial-box{padding:12px}.source-row{grid-template-columns:minmax(0,1fr) 66px 36px;gap:6px}.source-row select{font-size:13px;padding-left:10px}.source-row .icon-btn{width:36px}.diagnostics-heading{align-items:flex-start;flex-direction:column;gap:4px}.actions{bottom:8px;padding:10px;border-radius:18px;gap:10px;margin-bottom:env(safe-area-inset-bottom)}.save-hint{font-size:11px;line-height:16px;max-width:170px}#save{min-width:110px;max-width:65%;font-size:13px}.range-row{grid-template-columns:minmax(0,1fr) 62px;gap:12px}}
+    @media(prefers-reduced-motion:reduce){*,*:before,*:after{transition:none!important;animation:none!important}}
+
   `; }
 }
 

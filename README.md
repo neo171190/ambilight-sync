@@ -4,9 +4,13 @@ Sync Philips TV Ambilight colors with any RGB-capable light available in Home As
 
 No Hue Bridge, no Hue Sync Box, no screen capture, no cloud processing.
 
-<img width="853" height="480" alt="demo" src="https://github.com/user-attachments/assets/8b49939e-af2b-44f7-82ca-f0b9e86723e6" />
+> **Note:** this is a vibe-coded community project. It works, it is useful, but it is still experimental software. Expect rough edges and please report bugs.
 
-> Demo: Philips Ambilight synchronized with a Xiaomi Bedside Lamp connected to Home Assistant using the HomeKit integration.
+## What's new in 0.4.1
+
+The panel now shares Chromatic's visual language: soft cards, consistent controls, a live color preview with ambient glow, and a monochrome dark theme. Three tabs organize the interface: **Atmosphere**, **Lights**, and **Settings**. The TV preview preserves dark source colors and transitions smoothly between updates.
+
+This update changes the interface only. TV polling, color processing, command rates, presets, and saved settings retain their existing behavior. Restart Home Assistant and refresh the panel after replacing the integration files.
 
 ## Features
 
@@ -15,7 +19,6 @@ No Hue Bridge, no Hue Sync Box, no screen capture, no cloud processing.
 - Supports Matter, Zigbee, Philips Hue, Wi-Fi RGB lights and other compatible light integrations
 - Runs locally inside Home Assistant
 
-> **Note:** this is a vibe-coded community project. It works, it is useful, but it is still experimental software. Expect rough edges and please report bugs.
 ### Light configuration
 
 - Multiple weighted Ambilight sources per light
@@ -254,7 +257,6 @@ Real-world behavior can vary significantly depending on the device, integration 
 | Govee M1 | Govee lights local | ✅ Good | Works well. High update rates are recommended because smooth hardware color transitions are not available. |
 | Govee M1 | Matter | ⚠️ Poor | Slow updates, noticeable lag and no smooth color transition. Not recommended for Ambilight sync. |
 | Xiaomi Mi Bedside Lamp 2 | HomeKit | ✅ Excellent | Very responsive. Smooth color transitions work well. Tested up to 8 Hz without noticeable slowdown. |
-| Yeelight Lightstrip Pro | HomeKit | ✅ Good | Very responsive over HomeKit. Does not support hardware transitions, but software smoothing provides visually smooth color changes thanks to the fast update rate. |
 | Yandex GX53 | Matter | ✅ Good | Works well at low update rates with smooth transitions. Higher rates may introduce delay. |
 
 Different smart lights behave very differently under frequent RGB updates, which is why per-light update rates and overrides are available.
