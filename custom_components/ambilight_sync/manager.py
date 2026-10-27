@@ -215,6 +215,9 @@ class AmbilightSyncManager:
         self._zero_since: float | None = None
         self._last_power_check = 0.0
         self._last_power_inactive = False
+        # Lights with a service call currently on its way. Releasing waits for
+        # these so a late Ambilight command cannot land after the restore.
+        self._in_flight: set[str] = set()
 
         self._tv_lock = asyncio.Lock()
 
@@ -644,6 +647,9 @@ class AmbilightSyncManager:
             task.cancel()
         self._fade_tasks.clear()
         self._pending.clear()
+        deadline = monotonic() + 2.0
+        while self._in_flight and monotonic() < deadline:
+            await asyncio.sleep(0.02)
 
         if self.restore_on_stop:
             await self._restore_lights()
@@ -1426,6 +1432,7 @@ class AmbilightSyncManager:
                 continue
 
             started = monotonic()
+            self._in_flight.add(entity_id)
             try:
                 if not command.on:
                     data: dict[str, Any] = {ATTR_ENTITY_ID: entity_id}
@@ -1470,6 +1477,8 @@ class AmbilightSyncManager:
                 if now - last_log >= 30:
                     _LOGGER.warning("Light update failed for %s: %s", entity_id, exc)
                     self._light_last_error_log_at[entity_id] = now
+            finally:
+                self._in_flight.discard(entity_id)
 
     @staticmethod
     def _record_timestamp(bucket: deque[float], now: float) -> None:
