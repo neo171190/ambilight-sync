@@ -525,3 +525,10 @@ def payload_is_all_zero(payload: Any) -> bool:
     zones = extract_zone_samples(payload, 0.0)
     samples = zones.get(ZONE_ALL, [])
     return bool(samples) and all(rgb == (0, 0, 0) for rgb, _ in samples)
+
+
+def payload_has_samples(payload: Any) -> bool:
+    """Return True when the payload contains at least one Ambilight sample."""
+    if not payload:
+        return False
+    return bool(extract_zone_samples(payload, 0.0).get(ZONE_ALL))

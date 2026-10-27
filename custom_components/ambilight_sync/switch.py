@@ -42,6 +42,7 @@ class AmbilightSyncSwitch(AmbilightSyncEntity, SwitchEntity):
             "lights": self.manager.light_count,
             "last_error": self.manager.last_error,
             "active_preset": self.manager.active_preset_name,
+            "waiting_for_tv": self.manager.waiting_for_tv,
         }
 
     async def async_turn_on(self, **kwargs) -> None:

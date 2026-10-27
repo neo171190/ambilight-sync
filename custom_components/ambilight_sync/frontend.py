@@ -9,7 +9,7 @@ from homeassistant.components import frontend, panel_custom
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.core import HomeAssistant
 
-from .const import PANEL_COMPONENT, PANEL_STATIC_URL, PANEL_URL, VERSION
+from .const import PANEL_COMPONENT, PANEL_STATIC_URL, PANEL_URL
 
 
 async def async_register_frontend(hass: HomeAssistant) -> None:

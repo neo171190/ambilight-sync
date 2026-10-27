@@ -134,3 +134,11 @@ CORNER_SLICE_FRACTION = 0.25
 PANEL_URL = "ambilight-sync"
 PANEL_COMPONENT = "ambilight-sync-panel"
 PANEL_STATIC_URL = "/ambilight_sync_static"
+
+# TV availability handling. When the TV is unreachable or in standby for
+# TV_RELEASE_SECONDS, the lights are handed back (restored) and polling slows
+# down to TV_IDLE_POLL_SECONDS until Ambilight colors appear again.
+TV_RELEASE_SECONDS = 15.0
+TV_IDLE_POLL_SECONDS = 5.0
+TV_POWER_CHECK_SECONDS = 5.0
+TV_ZERO_BEFORE_POWER_CHECK = 3.0

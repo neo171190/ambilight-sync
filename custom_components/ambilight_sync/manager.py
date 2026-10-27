@@ -12,7 +12,6 @@ from typing import Any
 from haphilipsjs import GeneralFailure, PhilipsTV
 from homeassistant.components.light import (
     ATTR_BRIGHTNESS,
-    ATTR_RGB_COLOR,
     ATTR_TRANSITION,
     DOMAIN as LIGHT_DOMAIN,
 )
@@ -32,11 +31,11 @@ from .color import (
     adjust_saturation,
     color_distance,
     color_from_samples,
-    extract_spatial_samples,
     extract_spatial_weight_map,
     extract_zone_samples,
     stabilized_color,
     output_brightness,
+    payload_has_samples,
     payload_is_all_zero,
     rec709_luminance_percent,
     smooth_rgb,
@@ -80,7 +79,18 @@ from .const import (
     SOURCE_MEASURED,
     SOURCE_PROCESSED,
     STUCK_PROCESSED_SECONDS,
+    TV_IDLE_POLL_SECONDS,
+    TV_POWER_CHECK_SECONDS,
+    TV_RELEASE_SECONDS,
+    TV_ZERO_BEFORE_POWER_CHECK,
     ZONE_ALL,
+)
+from .light_output import (
+    CAPABILITY_BRIGHTNESS,
+    CAPABILITY_ONOFF,
+    kelvin_range,
+    light_capability,
+    turn_on_data,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -198,6 +208,14 @@ class AmbilightSyncManager:
         self._stuck_processed_warned = False
         self._stuck_diag_task: asyncio.Task[None] | None = None
 
+        # TV availability. After TV_RELEASE_SECONDS of the TV being unreachable
+        # or in standby the lights are handed back and polling slows down.
+        self._tv_down_since: float | None = None
+        self._tv_released = False
+        self._zero_since: float | None = None
+        self._last_power_check = 0.0
+        self._last_power_inactive = False
+
         self._tv_lock = asyncio.Lock()
 
     def _load_active_preset(self) -> None:
@@ -229,6 +247,11 @@ class AmbilightSyncManager:
             entity_id = next(iter(self._light_last_errors))
             return f"{entity_id}: {self._light_last_errors[entity_id]}"
         return None
+
+    @property
+    def waiting_for_tv(self) -> bool:
+        """True while sync is on but the TV is off/unreachable and lights are released."""
+        return self._running and self._tv_released
 
     @property
     def light_count(self) -> int:
@@ -291,6 +314,13 @@ class AmbilightSyncManager:
                     1,
                 ),
                 "processed_stuck_warning": bool(self._stuck_processed_warned),
+                "waiting_for_tv": bool(self._tv_released),
+                "unavailable_seconds": round(
+                    max(0.0, now - self._tv_down_since)
+                    if self._tv_down_since is not None
+                    else 0.0,
+                    1,
+                ),
             },
             "lights": lights,
         }
@@ -308,6 +338,7 @@ class AmbilightSyncManager:
 
         self._snapshot_lights()
         self._reset_runtime_state()
+        self._reset_tv_availability()
         self._tv_last_error = None
         self._light_last_errors.clear()
         self._running = True
@@ -363,6 +394,7 @@ class AmbilightSyncManager:
             await self._restore_lights()
         self._snapshot.clear()
         self._reset_runtime_state(clear_previews=False)
+        self._reset_tv_availability()
 
     async def async_shutdown(self) -> None:
         await self.async_stop(restore=False)
@@ -452,6 +484,13 @@ class AmbilightSyncManager:
         if clear_previews:
             self._previews.clear()
 
+    def _reset_tv_availability(self) -> None:
+        self._tv_down_since = None
+        self._tv_released = False
+        self._zero_since = None
+        self._last_power_check = 0.0
+        self._last_power_inactive = False
+
     def _all_lights(self) -> list[str]:
         return sorted(self.light_configs)
 
@@ -509,22 +548,127 @@ class AmbilightSyncManager:
                 payload = await self._fetch_payload()
                 now = monotonic()
                 self._record_timestamp(self._tv_poll_times, now)
-                self._update_stuck_processed_watch(payload, now)
-                self._queue_colors(payload, now)
+                if not payload_has_samples(payload):
+                    raise RuntimeError("TV returned no Ambilight color data")
+
+                all_zero = payload_is_all_zero(payload)
+                tv_inactive = await self._tv_reports_inactive(all_zero, now)
+                if tv_inactive:
+                    self._mark_tv_down(now)
+                else:
+                    self._tv_down_since = None
+
+                if self._tv_released and not all_zero and not tv_inactive:
+                    self._resume_after_tv()
+
+                if not self._tv_released:
+                    self._update_stuck_processed_watch(payload, now)
+                    self._queue_colors(payload, now)
                 self._tv_last_error = None
             except asyncio.CancelledError:
                 raise
             except (GeneralFailure, RuntimeError, OSError, ValueError) as exc:
                 self._tv_last_error = str(exc)
-                self._log_tv_error(exc)
+                self._mark_tv_down(monotonic())
+                if self._tv_released:
+                    _LOGGER.debug("TV still unavailable: %s", exc)
+                else:
+                    self._log_tv_error(exc)
             except Exception as exc:  # Defensive: keep long-running sync alive.
                 self._tv_last_error = str(exc)
                 self._log_tv_error(exc, unexpected=True)
 
-            poll_rate = max(MIN_UPDATE_RATE, min(MAX_UPDATE_RATE, self.poll_rate))
-            period = 1.0 / poll_rate
+            try:
+                await self._release_if_tv_gone(monotonic())
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # Restoring must never kill the sync loop.
+                _LOGGER.exception("Failed to release lights while TV is unavailable")
+
+            if self._tv_released:
+                period = TV_IDLE_POLL_SECONDS
+            else:
+                poll_rate = max(MIN_UPDATE_RATE, min(MAX_UPDATE_RATE, self.poll_rate))
+                period = 1.0 / poll_rate
             elapsed = monotonic() - started
             await asyncio.sleep(max(0.0, period - elapsed))
+
+    def _mark_tv_down(self, now: float) -> None:
+        if self._tv_down_since is None:
+            self._tv_down_since = now
+
+    async def _tv_reports_inactive(self, all_zero: bool, now: float) -> bool:
+        """Return True when the TV says it is not on (standby).
+
+        Only asked while Ambilight has been all black for a few seconds, and
+        at most every TV_POWER_CHECK_SECONDS. An unknown power state never
+        counts as inactive, so a dark scene can never release the lights.
+        """
+        if not all_zero:
+            self._zero_since = None
+            self._last_power_inactive = False
+            return False
+        if self._zero_since is None:
+            self._zero_since = now
+        if now - self._zero_since < TV_ZERO_BEFORE_POWER_CHECK:
+            return False
+        if now - self._last_power_check < TV_POWER_CHECK_SECONDS:
+            return self._last_power_inactive
+
+        self._last_power_check = now
+        try:
+            async with self._tv_lock:
+                result = await self.tv.getPowerState()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            _LOGGER.debug("Power state check failed: %s", exc)
+            self._last_power_inactive = False
+            return False
+
+        state = str((result or {}).get("powerstate", "")).strip().lower()
+        self._last_power_inactive = bool(state) and state != "on"
+        if self._last_power_inactive:
+            _LOGGER.debug("TV reports power state %s", state)
+        return self._last_power_inactive
+
+    async def _release_if_tv_gone(self, now: float) -> None:
+        """Hand the lights back once the TV has been gone long enough."""
+        if self._tv_released or self._tv_down_since is None:
+            return
+        if now - self._tv_down_since < TV_RELEASE_SECONDS:
+            return
+
+        self._tv_released = True
+        for task in list(self._fade_tasks.values()):
+            task.cancel()
+        self._fade_tasks.clear()
+        self._pending.clear()
+
+        if self.restore_on_stop:
+            await self._restore_lights()
+        # The snapshot has been applied; a later stop must not apply it again
+        # over whatever the user did with the lights in the meantime.
+        self._snapshot.clear()
+        self._reset_runtime_state(clear_previews=False)
+        for entity_id in self._all_lights():
+            self._previews[entity_id] = {
+                **self._previews.get(entity_id, {}),
+                "state": "waiting_for_tv",
+            }
+        _LOGGER.info(
+            "TV unavailable or in standby for %.0fs; lights released, waiting for the TV",
+            now - self._tv_down_since,
+        )
+
+    def _resume_after_tv(self) -> None:
+        """Take the lights over again once Ambilight colors are back."""
+        self._tv_released = False
+        self._tv_down_since = None
+        self._zero_since = None
+        self._snapshot_lights()
+        self._reset_runtime_state(clear_previews=False)
+        _LOGGER.info("TV is back; resuming Ambilight sync")
 
     def _log_tv_error(self, exc: Exception, *, unexpected: bool = False) -> None:
         now = monotonic()
@@ -929,10 +1073,21 @@ class AmbilightSyncManager:
             previous = self._last_queued.get(entity_id) or self._last_successful.get(entity_id)
             threshold = float(settings[CONF_THRESHOLD])
             if not priority_frame and previous is not None and previous.on:
-                if (
-                    color_distance(previous.rgb, rgb) < threshold
-                    and abs(previous.brightness - brightness) < max(2.0, threshold / 2.0)
-                ):
+                capability = self._light_capability(entity_id)
+                same_brightness = abs(previous.brightness - brightness) < max(
+                    2.0, threshold / 2.0
+                )
+                # Lights without color ignore hue changes, so only changes
+                # they can actually show are worth a command.
+                if capability == CAPABILITY_ONOFF:
+                    continue
+                # Identical commands are never worth repeating, even with a
+                # change threshold of 0.
+                if previous.rgb == rgb and previous.brightness == brightness:
+                    continue
+                if capability == CAPABILITY_BRIGHTNESS and same_brightness:
+                    continue
+                if color_distance(previous.rgb, rgb) < threshold and same_brightness:
                     continue
 
             transition = (
@@ -1233,6 +1388,20 @@ class AmbilightSyncManager:
         except asyncio.CancelledError:
             raise
 
+    def _light_capability(self, entity_id: str) -> str:
+        state = self.hass.states.get(entity_id)
+        if state is None:
+            return light_capability(None)
+        return light_capability(state.attributes.get("supported_color_modes"))
+
+    def _turn_on_data(self, entity_id: str, command: LightCommand) -> dict[str, Any]:
+        state = self.hass.states.get(entity_id)
+        attributes = state.attributes if state is not None else {}
+        capability = light_capability(attributes.get("supported_color_modes"))
+        return turn_on_data(
+            capability, command.rgb, command.brightness, kelvin_range(attributes)
+        )
+
     def _queue_command(
         self, entity_id: str, command: LightCommand, *, normal: bool
     ) -> None:
@@ -1267,8 +1436,7 @@ class AmbilightSyncManager:
                 else:
                     data = {
                         ATTR_ENTITY_ID: entity_id,
-                        ATTR_RGB_COLOR: command.rgb,
-                        ATTR_BRIGHTNESS: command.brightness,
+                        **self._turn_on_data(entity_id, command),
                     }
                     if command.transition > 0:
                         data[ATTR_TRANSITION] = command.transition
