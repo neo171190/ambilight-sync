@@ -6,6 +6,8 @@ No Hue Bridge, no Hue Sync Box, no screen capture, no cloud processing.
 
 > **Note:** this is a vibe-coded community project. It works, it is useful, but it is still experimental software. Expect rough edges and please report bugs.
 
+> **Fork notice:** this repository is a modified fork of [uccae/Ambilight-Sync-for-Home-Assistant](https://github.com/uccae/Ambilight-Sync-for-Home-Assistant) (MIT). See [CHANGELOG.md](CHANGELOG.md) for what differs from upstream.
+
 ## What's new in 0.4.1
 
 The panel now shares Chromatic's visual language: soft cards, consistent controls, a live color preview with ambient glow, and a monochrome dark theme. Three tabs organize the interface: **Atmosphere**, **Lights**, and **Settings**. The TV preview preserves dark source colors and transitions smoothly between updates.
@@ -230,7 +232,17 @@ Higher light update rates are not always better. Some smart bulbs become more de
 
 ## Installation
 
-1. Download the latest release.
+### Via HACS (custom repository)
+
+1. In HACS open the menu → **Custom repositories**.
+2. Add this repository's URL with type **Integration**.
+3. Install **Ambilight Sync for Home Assistant** and restart Home Assistant.
+
+HACS only works with public repositories. While the repository is private, use the manual installation below.
+
+### Manual
+
+1. Download the repository (or the latest release).
 2. Copy:
 
 ```text
@@ -244,9 +256,12 @@ to:
 ```
 
 3. Restart Home Assistant.
-4. Go to **Settings → Devices & services → Add integration**.
-5. Search for **Ambilight Sync** and pair the Philips TV.
-6. Open **Ambilight Sync** from the Home Assistant sidebar to configure lights and behavior.
+
+### Setup
+
+1. Go to **Settings → Devices & services → Add integration**.
+2. Search for **Ambilight Sync** and pair the Philips TV.
+3. Open **Ambilight Sync** from the Home Assistant sidebar to configure lights and behavior.
 
 ## Tested lights
 
