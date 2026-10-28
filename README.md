@@ -4,9 +4,11 @@ Sync Philips TV Ambilight colors with any RGB-capable light available in Home As
 
 No Hue Bridge, no Hue Sync Box, no screen capture, no cloud processing.
 
-> **Note:** this is a vibe-coded community project. It works, it is useful, but it is still experimental software. Expect rough edges and please report bugs.
+> **Note:** this is a vibe-coded community project. It works, it is useful, but it is still experimental software. Expect rough edges.
 
 > **Fork notice:** this repository is a modified fork of [uccae/Ambilight-Sync-for-Home-Assistant](https://github.com/uccae/Ambilight-Sync-for-Home-Assistant) (MIT). See [CHANGELOG.md](CHANGELOG.md) for what differs from upstream.
+
+> **No support:** this fork is published as-is for anyone who wants to use it. Issues, pull requests, feature requests and support questions are not accepted or answered. If you want changes, fork the repository and make them in your own copy.
 
 ## What's new in 0.4.1
 
@@ -310,7 +312,7 @@ Beta.
 
 The priority is stable, pleasant ambient lighting rather than maximum FPS.
 
-Testing on different Philips TV models and different light platforms is welcome.
+This fork is not actively maintained for others; see the no-support note at the top.
 
 ## License
 
