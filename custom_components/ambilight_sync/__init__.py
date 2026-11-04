@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -14,6 +15,7 @@ from .config_model import CONF_PROFILE_CONFIG, profile_config_from_entry
 from .const import CONF_SYSTEM, DOMAIN
 from .frontend import async_register_frontend
 from .manager import AmbilightSyncManager
+from .room_store import async_room_store
 from .services import async_register_services
 from .websocket import async_register_websocket
 
@@ -34,13 +36,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Ambilight Sync from a config entry."""
     data: dict[str, Any] = dict(entry.data)
     system = dict(data.get(CONF_SYSTEM, {}))
+    await async_room_store(hass)
 
     # First load after upgrading from the flat configuration automatically
     # creates one Default preset. TV credentials remain in entry.data untouched.
     profile_config = profile_config_from_entry(entry)
-    if entry.options.get(CONF_PROFILE_CONFIG) != profile_config:
+    saved_profile = deepcopy(profile_config)
+    for preset in saved_profile["presets"].values():
+        preset["rendering"].pop("room", None)
+    if entry.options.get(CONF_PROFILE_CONFIG) != saved_profile:
         options = dict(entry.options)
-        options[CONF_PROFILE_CONFIG] = profile_config
+        options[CONF_PROFILE_CONFIG] = saved_profile
         hass.config_entries.async_update_entry(entry, options=options)
 
     manager = AmbilightSyncManager(

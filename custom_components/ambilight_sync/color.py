@@ -39,7 +39,7 @@ def _pixel_rgb(pixel: Any) -> RGB | None:
             _clamp_channel(float(pixel["g"])),
             _clamp_channel(float(pixel["b"])),
         )
-    except (KeyError, TypeError, ValueError):
+    except (KeyError, TypeError, ValueError, OverflowError):
         return None
 
 
@@ -76,6 +76,35 @@ def _layer_from_payload(payload: Any) -> Mapping[str, Any] | None:
         if isinstance(value, Mapping):
             return value
     return None
+
+
+def payload_has_samples(payload: Any) -> bool:
+    """Distinguish a missing/invalid frame from valid samples, including black."""
+    layer = _layer_from_payload(payload)
+    if layer is None:
+        return False
+    for name in (ZONE_TOP, ZONE_RIGHT, ZONE_BOTTOM, ZONE_LEFT):
+        side = layer.get(name)
+        if isinstance(side, Mapping):
+            if any(_pixel_rgb(pixel) is not None for pixel in side.values()):
+                return True
+    return False
+
+
+def extract_tv_preview(payload: Any) -> dict[str, list[list[int]]] | None:
+    """Expose TV perimeter samples without applying any light color settings.
+
+    Keep jointSPACE index order: top left to right, right top to bottom,
+    bottom right to left, and left bottom to top. Black is a valid sample.
+    """
+    layer = _layer_from_payload(payload)
+    if layer is None:
+        return None
+    sides = {
+        side: [list(rgb) for rgb in _pixels_from_side(layer.get(side))]
+        for side in (ZONE_TOP, ZONE_RIGHT, ZONE_BOTTOM, ZONE_LEFT)
+    }
+    return sides if any(sides.values()) else None
 
 
 def extract_spatial_weight_map(
@@ -243,6 +272,18 @@ def _perceptual(samples: WeightedSamples) -> RGB | None:
     value = min(1.0, 0.62 * rms_value + 0.38 * mean_value)
 
     r, g, b = colorsys.hsv_to_rgb(hue, saturation, value)
+    # Opposing hue vectors have no reliable mean direction. Blend toward the
+    # neutral RGB mean as vector confidence vanishes, rather than amplifying
+    # floating-point residue into a fully saturated, arbitrary third color.
+    coherence = min(1.0, math.hypot(sin_sum, cos_sum) / hue_weight_total)
+    if coherence < 0.15:
+        average = _weighted_average(samples)
+        if average is not None:
+            t = coherence / 0.15
+            confidence = t * t * (3.0 - 2.0 * t)
+            r = average[0] / 255.0 * (1.0 - confidence) + r * confidence
+            g = average[1] / 255.0 * (1.0 - confidence) + g * confidence
+            b = average[2] / 255.0 * (1.0 - confidence) + b * confidence
     return (
         _clamp_channel(r * 255),
         _clamp_channel(g * 255),
@@ -428,14 +469,16 @@ def extract_zone_colors(payload: Any) -> dict[str, RGB]:
     return result
 
 
-def smooth_rgb(previous: RGB | None, current: RGB, smoothing_percent: float) -> RGB:
+def smooth_rgb(
+    previous: tuple[float, float, float] | None, current: RGB, smoothing_percent: float
+) -> tuple[float, float, float]:
     """Apply exponential smoothing. 0% means raw input, 95% is very smooth."""
     if previous is None:
         return current
     old_weight = max(0.0, min(0.95, smoothing_percent / 100.0))
     new_weight = 1.0 - old_weight
     return tuple(
-        _clamp_channel(previous[i] * old_weight + current[i] * new_weight)
+        max(0.0, min(255.0, previous[i] * old_weight + current[i] * new_weight))
         for i in range(3)
     )  # type: ignore[return-value]
 
@@ -525,10 +568,3 @@ def payload_is_all_zero(payload: Any) -> bool:
     zones = extract_zone_samples(payload, 0.0)
     samples = zones.get(ZONE_ALL, [])
     return bool(samples) and all(rgb == (0, 0, 0) for rgb, _ in samples)
-
-
-def payload_has_samples(payload: Any) -> bool:
-    """Return True when the payload contains at least one Ambilight sample."""
-    if not payload:
-        return False
-    return bool(extract_zone_samples(payload, 0.0).get(ZONE_ALL))

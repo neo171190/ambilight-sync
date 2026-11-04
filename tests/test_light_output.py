@@ -1,31 +1,16 @@
-"""Tests for per-light output translation."""
+"""Tests for per-light command data (upstream capabilities + fork Kelvin output)."""
 
-from custom_components.ambilight_sync.light_output import (
-    CAPABILITY_BRIGHTNESS,
-    CAPABILITY_COLOR,
-    CAPABILITY_COLOR_TEMP,
-    CAPABILITY_ONOFF,
-    kelvin_range,
-    light_capability,
-    rgb_to_kelvin,
-    turn_on_data,
-)
+from types import SimpleNamespace
+
+from custom_components.ambilight_sync.capabilities import command_data
+from custom_components.ambilight_sync.light_output import kelvin_range, rgb_to_kelvin
 
 
-def test_capability_prefers_color():
-    assert light_capability(["color_temp", "xy"]) == CAPABILITY_COLOR
-    assert light_capability(["rgbww"]) == CAPABILITY_COLOR
-
-
-def test_capability_white_only_lights():
-    assert light_capability(["color_temp"]) == CAPABILITY_COLOR_TEMP
-    assert light_capability(["brightness"]) == CAPABILITY_BRIGHTNESS
-    assert light_capability(["onoff"]) == CAPABILITY_ONOFF
-
-
-def test_capability_unknown_falls_back_to_color():
-    assert light_capability(None) == CAPABILITY_COLOR
-    assert light_capability([]) == CAPABILITY_COLOR
+def light(modes, **attributes):
+    return SimpleNamespace(
+        state="on",
+        attributes={"supported_color_modes": modes, **attributes},
+    )
 
 
 def test_kelvin_mapping_follows_red_blue_balance():
@@ -44,12 +29,23 @@ def test_kelvin_range_handles_missing_and_swapped_values():
     assert kelvin_range({"min_color_temp_kelvin": "x"}) == (2000, 6500)
 
 
-def test_turn_on_data_per_capability():
-    rgb = (255, 0, 0)
-    assert turn_on_data(CAPABILITY_COLOR, rgb, 100) == {"rgb_color": rgb, "brightness": 100}
-    assert turn_on_data(CAPABILITY_COLOR_TEMP, rgb, 100, (2202, 5000)) == {
-        "color_temp_kelvin": 2202,
-        "brightness": 100,
+def test_color_light_gets_rgb():
+    data = command_data("light.a", light(["xy", "color_temp"]), (255, 0, 0), 100, 0)
+    assert data == {"entity_id": "light.a", "rgb_color": (255, 0, 0), "brightness": 100}
+
+
+def test_white_ambiance_light_gets_color_temperature():
+    state = light(["color_temp"], min_color_temp_kelvin=2202, max_color_temp_kelvin=5000)
+    data = command_data("light.a", state, (255, 0, 0), 100, 0)
+    assert data == {"entity_id": "light.a", "color_temp_kelvin": 2202, "brightness": 100}
+    assert command_data("light.a", state, (0, 0, 255), 100, 0)["color_temp_kelvin"] == 5000
+
+
+def test_dimmable_and_onoff_lights():
+    assert command_data("light.a", light(["brightness"]), (255, 0, 0), 80, 0) == {
+        "entity_id": "light.a",
+        "brightness": 80,
     }
-    assert turn_on_data(CAPABILITY_BRIGHTNESS, rgb, 100) == {"brightness": 100}
-    assert turn_on_data(CAPABILITY_ONOFF, rgb, 100) == {}
+    assert command_data("light.a", light(["onoff"]), (255, 0, 0), 80, 0) == {
+        "entity_id": "light.a"
+    }

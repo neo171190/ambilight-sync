@@ -6,15 +6,9 @@ No Hue Bridge, no Hue Sync Box, no screen capture, no cloud processing.
 
 > **Note:** this is a vibe-coded community project. It works, it is useful, but it is still experimental software. Expect rough edges.
 
-> **Fork notice:** this repository is a modified fork of [uccae/Ambilight-Sync-for-Home-Assistant](https://github.com/uccae/Ambilight-Sync-for-Home-Assistant) (MIT). See [CHANGELOG.md](CHANGELOG.md) for what differs from upstream.
+> **Fork notice:** this repository is a modified fork of [uccae/Ambilight-Sync-for-Home-Assistant](https://github.com/uccae/Ambilight-Sync-for-Home-Assistant) (MIT), currently based on upstream v0.5.1. See [CHANGELOG.md](CHANGELOG.md) for what differs from upstream.
 
 > **No support:** this fork is published as-is for anyone who wants to use it. Issues, pull requests, feature requests and support questions are not accepted or answered. If you want changes, fork the repository and make them in your own copy.
-
-## What's new in 0.4.1
-
-The panel now shares Chromatic's visual language: soft cards, consistent controls, a live color preview with ambient glow, and a monochrome dark theme. Three tabs organize the interface: **Atmosphere**, **Lights**, and **Settings**. The TV preview preserves dark source colors and transitions smoothly between updates.
-
-This update changes the interface only. TV polling, color processing, command rates, presets, and saved settings retain their existing behavior. Restart Home Assistant and refresh the panel after replacing the integration files.
 
 ## Features
 
@@ -24,6 +18,11 @@ This update changes the interface only. TV polling, color processing, command ra
 - Runs locally inside Home Assistant
 
 ### Light configuration
+
+- Optional Ambient room mode with X/Y/Z coordinates and linked front/top views
+- Temporary participation switch for each light, independent of presets
+- Physical identification of the selected room light with a steady accent
+- Copy Settings with device capability checks
 
 - Multiple weighted Ambilight sources per light
 - Independent update rate for each light
@@ -115,7 +114,7 @@ Weak color differences in very dark samples are suppressed before RGB normalizat
 
 Existing presets, manual mappings and per-light overrides are preserved. Debug shows desired output, not an optical measurement or confirmation of the light's physical color.
 
-Each preset stores its own global settings, light assignments, source mixer and individual light overrides.
+Each preset stores its own global settings, light assignments, source mixer and individual light overrides. Ambient physical positions are shared across presets; TV poses are associated with each configured TV.
 
 A light can mix several Ambilight zones, for example:
 
@@ -134,9 +133,9 @@ data:
   preset: Movie
 ```
 
-## Spatial positioning
+## Classic spatial positioning
 
-Each light can use either **Spatial** or **Manual** positioning.
+In Classic mode, each light can use either **Spatial** or **Manual** positioning. Ambient uses a separate X/Y/Z room layout; see the [room guide](docs/AMBIENT.md).
 
 Spatial mode uses X/Y coordinates from `-100` to `+100` and weights the individual Ambilight pixels exposed by the TV according to their distance from the virtual light position.
 
@@ -234,36 +233,25 @@ Higher light update rates are not always better. Some smart bulbs become more de
 
 ## Installation
 
-### Via HACS (custom repository)
+### HACS
 
-1. In HACS open the menu → **Custom repositories**.
-2. Add this repository's URL with type **Integration**.
-3. Install **Ambilight Sync for Home Assistant** and restart Home Assistant.
+1. Open **HACS → menu (⋮) → Custom repositories**.
+2. Add `https://github.com/neo171190/ambilight-sync` and choose **Integration** as the type.
+3. Find **Ambilight Sync for Home Assistant**, download it, and restart Home Assistant.
+4. Go to **Settings → Devices & services → Add integration**, search for **Ambilight Sync**, and pair the Philips TV.
+5. Open **Ambilight Sync** from the sidebar to configure lights.
 
-HACS only works with public repositories. While the repository is private, use the manual installation below.
+[Open repository in HACS](https://my.home-assistant.io/redirect/hacs_repository/?owner=neo171190&repository=ambilight-sync&category=integration)
 
-### Manual
+### Manual installation
 
-1. Download the repository (or the latest release).
-2. Copy:
+1. Download this repository (**Code → Download ZIP**).
+2. Extract it and copy `custom_components/ambilight_sync` to `/config/custom_components/ambilight_sync`.
+3. Restart Home Assistant, then add the integration under **Settings → Devices & services** and open its sidebar panel.
 
-```text
-custom_components/ambilight_sync
-```
+### Updating
 
-to:
-
-```text
-/config/custom_components/ambilight_sync
-```
-
-3. Restart Home Assistant.
-
-### Setup
-
-1. Go to **Settings → Devices & services → Add integration**.
-2. Search for **Ambilight Sync** and pair the Philips TV.
-3. Open **Ambilight Sync** from the Home Assistant sidebar to configure lights and behavior.
+Update with HACS, or replace the integration folder for a manual installation. Restart Home Assistant and reload the panel. Keep the existing integration entry: pairing and presets are migrated automatically. Back up Home Assistant before updating; older Ambient users should also review any retained room-layout alternatives.
 
 ## Tested lights
 
@@ -308,7 +296,7 @@ Actual behavior depends on TV firmware, light firmware, transport and how each l
 
 ## Project status
 
-Beta.
+Fork version 0.5.1.1, based on upstream 0.5.1.
 
 The priority is stable, pleasant ambient lighting rather than maximum FPS.
 

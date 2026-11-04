@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from typing import Any
+from .ambient import normalize_rendering
 
 from .const import (
     COLOR_MODES,
@@ -76,7 +77,7 @@ from .const import (
     ZONES,
 )
 
-PROFILE_SCHEMA_VERSION = 6
+PROFILE_SCHEMA_VERSION = 8
 CONF_PROFILE_CONFIG = "profile_config"
 DEFAULT_PRESET_ID = "default"
 DEFAULT_PRESET_NAME = "Default"
@@ -345,10 +346,12 @@ def normalize_profile_config(raw: Any) -> dict[str, Any]:
             continue
         name = str(preset.get("name") or preset_id).strip()[:80] or preset_id
         global_settings = normalize_settings(preset.get("global"))
+        lights = normalize_lights(preset.get("lights"), global_settings)
         presets[preset_id] = {
             "name": name,
             "global": global_settings,
-            "lights": normalize_lights(preset.get("lights"), global_settings),
+            "lights": lights,
+            "rendering": normalize_rendering(preset.get("rendering"), lights),
         }
 
     if not presets:
@@ -357,6 +360,7 @@ def normalize_profile_config(raw: Any) -> dict[str, Any]:
             "name": DEFAULT_PRESET_NAME,
             "global": global_settings,
             "lights": {},
+            "rendering": normalize_rendering({}, {}),
         }
 
     active = str(raw.get("active_preset") or "")

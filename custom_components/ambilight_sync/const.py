@@ -1,7 +1,7 @@
 """Constants for Ambilight Sync."""
 
 DOMAIN = "ambilight_sync"
-VERSION = "0.4.1.1"
+VERSION = "0.5.1.1"
 
 CONF_SYSTEM = "system"
 
@@ -94,8 +94,8 @@ ZONE_CONFIG_KEYS = {
 
 DEFAULT_SOURCE = SOURCE_PROCESSED
 DEFAULT_COLOR_MODE = COLOR_MODE_AVERAGE
-# Conservative defaults: Zigbee lights (and the Hue Bridge in particular)
-# only handle a few commands per second per light. 15 Hz flooded them.
+# Fork: conservative defaults. Zigbee lights (and the Hue Bridge in
+# particular) only handle a few commands per second per light.
 DEFAULT_UPDATE_RATE = 3.0
 DEFAULT_POLL_RATE = 4.0
 DEFAULT_SMOOTHING = 0.0
@@ -135,7 +135,7 @@ PANEL_URL = "ambilight-sync"
 PANEL_COMPONENT = "ambilight-sync-panel"
 PANEL_STATIC_URL = "/ambilight_sync_static"
 
-# TV availability handling. When the TV is unreachable or in standby for
+# Fork: TV availability handling. When the TV is unreachable or in standby for
 # TV_RELEASE_SECONDS, the lights are handed back (restored) and polling slows
 # down to TV_IDLE_POLL_SECONDS until Ambilight colors appear again.
 TV_RELEASE_SECONDS = 15.0

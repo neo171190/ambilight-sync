@@ -40,25 +40,30 @@ class AmbilightSyncConfigFlow(ConfigFlow, domain=DOMAIN):
         self._pair_state: Any = None
 
     async def _async_prepare(self, host: str, api_version: int) -> None:
+        if self._hub is not None:
+            await self._hub.session.aclose()
+            self._hub = None
         hub = PhilipsTV(host, api_version=api_version, secured_transport=False)
-        await hub.getSystem()
-        await hub.setTransport(hub.secured_transport, hub.api_version_detected)
-        if not hub.system:
-            await hub.session.aclose()
-            raise ConnectionFailure("TV returned no system data")
-
         self._hub = hub
-        self._current[CONF_HOST] = host
-        self._current[CONF_SYSTEM] = hub.system
-        self._current[CONF_API_VERSION] = hub.api_version
+        try:
+            await hub.getSystem()
+            await hub.setTransport(hub.secured_transport, hub.api_version_detected)
+            if not hub.system:
+                raise ConnectionFailure("TV returned no system data")
 
-        name = hub.name or str(hub.system.get("name") or host)
-        self.context.update({"title_placeholders": {"name": name}})
-
-        serial = hub.system.get("serialnumber")
-        if serial:
-            await self.async_set_unique_id(str(serial))
-            self._abort_if_unique_id_configured()
+            self._current[CONF_HOST] = host
+            self._current[CONF_SYSTEM] = hub.system
+            self._current[CONF_API_VERSION] = hub.api_version
+            name = hub.name or str(hub.system.get("name") or host)
+            self.context.update({"title_placeholders": {"name": name}})
+            serial = hub.system.get("serialnumber")
+            if serial:
+                await self.async_set_unique_id(str(serial))
+                self._abort_if_unique_id_configured()
+        except BaseException:
+            self._hub = None
+            await hub.session.aclose()
+            raise
 
     async def _async_finish(self) -> ConfigFlowResult:
         assert self._hub is not None

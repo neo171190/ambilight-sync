@@ -8,13 +8,11 @@ from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import ServiceValidationError
 
 from .config_model import (
-    CONF_PROFILE_CONFIG,
-    normalize_profile_config,
     profile_config_from_entry,
     resolve_preset,
 )
 from .const import DOMAIN, SERVICE_ACTIVATE_PRESET
-from .manager import AmbilightSyncManager
+from .profile_store import profile_lock, store_profile_locked
 
 _REGISTERED = "_services_registered"
 
@@ -38,20 +36,13 @@ async def async_register_services(hass: HomeAssistant) -> None:
             raise ServiceValidationError("entry_id is required when multiple Ambilight Sync TVs exist")
 
         entry = entries[0]
-        profile_config = profile_config_from_entry(entry)
-        preset_id = resolve_preset(profile_config, preset_value)
-        if preset_id is None:
-            raise ServiceValidationError(f"Preset not found: {preset_value}")
-
-        profile_config["active_preset"] = preset_id
-        profile_config = normalize_profile_config(profile_config)
-        options = dict(entry.options)
-        options[CONF_PROFILE_CONFIG] = profile_config
-        hass.config_entries.async_update_entry(entry, options=options)
-
-        manager: AmbilightSyncManager | None = hass.data.get(DOMAIN, {}).get(entry.entry_id)
-        if manager is not None:
-            await manager.async_apply_profile_config(profile_config)
+        async with profile_lock(hass, entry.entry_id):
+            profile_config = profile_config_from_entry(entry)
+            preset_id = resolve_preset(profile_config, preset_value)
+            if preset_id is None:
+                raise ServiceValidationError(f"Preset not found: {preset_value}")
+            profile_config["active_preset"] = preset_id
+            await store_profile_locked(hass, entry, profile_config)
 
     hass.services.async_register(
         DOMAIN,

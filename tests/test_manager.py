@@ -124,6 +124,8 @@ async def setup(hass, fast_timing):
     )
     tv = FakeTV()
     manager.tv = tv
+    # Upstream reconnects with a fresh client after repeated failures.
+    manager._create_tv_client = lambda: tv
     yield manager, tv, turn_on, turn_off
     await manager.async_stop(restore=False)
 
@@ -188,7 +190,10 @@ async def test_sync_resumes_when_tv_returns(hass, setup):
 
     assert not manager.waiting_for_tv
     color = calls_for(turn_on, COLOR)
-    assert color and color[-1]["rgb_color"] == (0, 255, 0)
+    # Upstream eases into the new color after a hand-off; it must end up green.
+    assert color
+    red, green, blue = color[-1]["rgb_color"]
+    assert green == 255 and red < 20 and blue < 20
 
 
 async def test_standby_tv_releases_lights(hass, setup):
